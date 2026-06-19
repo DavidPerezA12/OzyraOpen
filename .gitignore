@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+.npm-cache/
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Local env files
+.env
+.env.local
+.env.*.local
+
+# TypeScript incremental builds
+*.tsbuildinfo
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS/editor files
+.DS_Store
+.vscode/
+.idea/
+
+# Local agent/tooling files
+.agents/
+.claude/
+AGENTS.md
+CLAUDE.md
+telemetry-id

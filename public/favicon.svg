@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="100%" height="100%">
+  <style>
+    :root {
+      --tile: #1a1814;
+      --mark: #ebe6de;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --tile: #ebe6df;
+        --mark: #121218;
+      }
+    }
+    .tile { fill: var(--tile); }
+    .mark { fill: var(--mark); }
+  </style>
+
+  <!-- Squircle tile (acento sólido) -->
+  <rect class="tile" width="24" height="24" rx="6.5" />
+
+  <!-- Marca Ozyra en negativo: llama con punto recortado -->
+  <path class="mark" fill-rule="evenodd" d="M12 3.5c-1.9 3.6-5.3 5.2-5.3 10.2a5.3 5.3 0 0 0 10.6 0c0-5-3.4-6.6-5.3-10.2Zm0 12.4a2 2 0 1 1 0-4 2 2 0 0 1 0 4Z" />
+</svg>

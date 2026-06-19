@@ -1,0 +1,13 @@
+dist
+build
+node_modules
+coverage
+*.min.js
+*.min.css
+.vite
+.env
+.env.*
+!.env.example
+package-lock.json
+pnpm-lock.yaml
+yarn.lock

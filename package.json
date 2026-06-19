@@ -1,0 +1,75 @@
+{
+  "name": "ozyra-open",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cliente de chat local-first con Vite, React, TypeScript y OpenRouter.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DavidPerezA12/OzyraOpen.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DavidPerezA12/OzyraOpen/issues"
+  },
+  "homepage": "https://github.com/DavidPerezA12/OzyraOpen#readme",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "build:analyze": "vite build --mode analyze",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "type-check": "tsc -b --pretty false",
+    "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css,md}\" \"*.md\" \"*.{js,html,json}\" \"docs/**/*.md\" \"vite.config.ts\" \".github/**/*.yml\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx,json,css,md}\" \"*.md\" \"*.{js,html,json}\" \"docs/**/*.md\" \"vite.config.ts\" \".github/**/*.yml\"",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui",
+    "validate": "npm run type-check && npm run lint && npm run format:check && npm run test",
+    "prepare": "husky",
+    "clean": "rm -rf dist build coverage node_modules/.vite *.tsbuildinfo",
+    "knip": "knip --include files,dependencies,devDependencies,unlisted,unresolved,binaries"
+  },
+  "dependencies": {
+    "@lobehub/icons-static-svg": "^1.91.0",
+    "lucide-react": "^0.344.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-hot-toast": "^2.5.2",
+    "react-icons": "^5.5.0",
+    "react-markdown": "^10.1.0",
+    "react-syntax-highlighter": "^16.1.1",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.36.0",
+    "@testing-library/jest-dom": "^6.5.0",
+    "@testing-library/react": "^16.0.1",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "@vitejs/plugin-react": "^5.0.4",
+    "@vitest/coverage-v8": "^4.1.7",
+    "autoprefixer": "^10.4.18",
+    "eslint": "^9.36.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.22",
+    "globals": "^15.9.0",
+    "husky": "^9.1.7",
+    "jsdom": "^24.1.0",
+    "knip": "^6.16.0",
+    "postcss": "^8.4.35",
+    "prettier": "^3.8.3",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.5.4",
+    "typescript-eslint": "^8.44.1",
+    "vite": "^6.3.6",
+    "vitest": "^4.1.7"
+  },
+  "overrides": {
+    "@types/node-fetch": "^2.6.13",
+    "form-data": "^4.0.4"
+  }
+}
