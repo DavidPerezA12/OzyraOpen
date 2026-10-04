@@ -66,16 +66,3 @@ export const STORAGE_KEYS = {
   /** Key para tamaño de contexto de búsqueda web */
   WEB_SEARCH_CONTEXT_SIZE: 'ozyra_web_search_context_size',
 } as const;
-
-// ============================================================================
-// ERROR MESSAGES
-// ============================================================================
-
-export const ERROR_MESSAGES = {
-  // Network errors
-  NETWORK_ERROR: 'Error de conexión',
-  TIMEOUT_ERROR: 'Tiempo de espera agotado',
-
-  // Generic
-  UNKNOWN_ERROR: 'Ha ocurrido un error inesperado',
-} as const;

@@ -5,7 +5,7 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'build', 'node_modules', 'coverage', '*.config.js', '*.config.ts'] },
+  { ignores: ['dist', 'build', 'node_modules', 'coverage', '*.config.js'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],
@@ -22,7 +22,7 @@ export default tseslint.config(
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
 
       // TypeScript specific rules
-      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-unused-vars': [
         'error',
         {
@@ -43,7 +43,7 @@ export default tseslint.config(
       ],
 
       // General code quality rules
-      'no-console': ['warn', { allow: ['warn', 'error', 'info'] }],
+      'no-console': 'error',
       'no-debugger': 'error',
       'prefer-const': 'error',
       'no-var': 'error',
@@ -54,7 +54,14 @@ export default tseslint.config(
       'no-duplicate-imports': 'error',
 
       // React specific rules
-      'react-hooks/exhaustive-deps': 'warn',
+      'react-hooks/exhaustive-deps': 'error',
+    },
+  },
+  {
+    // Los tests pueden espiar console.* para verificar el logging.
+    files: ['**/*.test.{ts,tsx}'],
+    rules: {
+      'no-console': 'off',
     },
   }
 );

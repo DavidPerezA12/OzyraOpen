@@ -5,6 +5,8 @@
  * @module utils/logger
  */
 
+/* eslint-disable no-console -- este fichero ES el sumidero de consola; el resto del código usa `logger` */
+
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 interface LogContext {
