@@ -49,8 +49,9 @@ describe('parseImportableChats', () => {
     });
 
     expect(chats).toHaveLength(1);
-    expect(chats[0].id).toBe('chat-1');
-    expect(chats[0].messages).toHaveLength(1);
+    expect(chats).toHaveLength(1);
+    expect(chats[0]?.id).toBe('chat-1');
+    expect(chats[0]?.messages).toHaveLength(1);
   });
 
   it('accepts the multi-chat export format', () => {
@@ -122,7 +123,7 @@ describe('parseImportableChats', () => {
       isPinned: true,
       isPersisted: true,
     });
-    expect(chats[0].messages[0]).toMatchObject({
+    expect(chats[0]?.messages[0]).toMatchObject({
       id: 'msg-db',
       role: 'assistant',
       content: 'Restored',
@@ -184,8 +185,9 @@ describe('parseImportableChats', () => {
       ],
     });
 
-    const persistedIds = await persistImportedChats('local-user', chats);
+    const { persistedIds, failed } = await persistImportedChats('local-user', chats);
 
+    expect(failed).toEqual([]);
     expect([...persistedIds]).toEqual(['chat-1', 'chat-2']);
     expect((await getChats('local-user')).map((chat) => chat.id).sort()).toEqual([
       'chat-1',

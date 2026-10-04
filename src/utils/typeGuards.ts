@@ -67,10 +67,11 @@ export const parseStoredChats = (raw: unknown): (Chat & { messages: Message[] })
 };
 
 /**
- * Type guard to check if a value is a record object
+ * Type guard to check if a value is a record object (arrays excluded: an
+ * array is `typeof 'object'` but must never validate as a record).
  */
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null;
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
  * Validate and parse fetch URL parameters

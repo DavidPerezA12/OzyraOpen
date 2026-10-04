@@ -6,6 +6,50 @@ import { DEFAULT_MODEL_ID } from '../config/models';
 import type { Chat, MessageAnnotation, MessageAttachment } from '../types';
 import { replaceChatWithMessages } from './db';
 import { isRecord, parseStoredChats } from './typeGuards';
+import { isSafeLinkHref } from './safeUrl';
+import { t } from '../i18n';
+import { logger } from './logger';
+
+const MAX_IMPORT_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_IMPORT_CHATS = 500;
+const MAX_MESSAGES_PER_CHAT = 1000;
+const MAX_CONTENT_CHARS = 200_000;
+const MAX_TITLE_CHARS = 200;
+const MAX_ATTACHMENTS_PER_MESSAGE = 4;
+const ALLOWED_IMPORT_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+
+const sanitizeImportedChats = (chats: Chat[]): Chat[] =>
+  chats.slice(0, MAX_IMPORT_CHATS).map((chat) => ({
+    ...chat,
+    title: typeof chat.title === 'string' ? chat.title.slice(0, MAX_TITLE_CHARS) : '',
+    messages: chat.messages.slice(0, MAX_MESSAGES_PER_CHAT).map((message) => ({
+      ...message,
+      content:
+        typeof message.content === 'string' ? message.content.slice(0, MAX_CONTENT_CHARS) : '',
+      annotations: Array.isArray(message.annotations)
+        ? (message.annotations.filter(
+            (annotation) =>
+              annotation?.type === 'url_citation' &&
+              typeof annotation.url_citation?.url === 'string' &&
+              typeof annotation.url_citation?.title === 'string' &&
+              isSafeLinkHref(annotation.url_citation.url)
+          ) as MessageAnnotation[])
+        : undefined,
+      attachments: Array.isArray(message.attachments)
+        ? (message.attachments
+            .filter(
+              (attachment): attachment is MessageAttachment =>
+                !!attachment &&
+                attachment.type === 'image' &&
+                typeof attachment.url === 'string' &&
+                typeof attachment.contentType === 'string' &&
+                ALLOWED_IMPORT_IMAGE_TYPES.has(attachment.contentType) &&
+                (typeof attachment.data !== 'string' || attachment.data.length <= 7_000_000)
+            )
+            .slice(0, MAX_ATTACHMENTS_PER_MESSAGE) as MessageAttachment[])
+        : undefined,
+    })),
+  }));
 
 interface ImportChatsParams {
   userId: string | null;
@@ -157,7 +201,7 @@ const parseChatsFromStorageSnapshot = (storage: unknown): Chat[] => {
 export const parseImportableChats = (parsed: unknown): Chat[] => {
   const directChats = parseStoredChats(Array.isArray(parsed) ? parsed : [parsed]);
   if (directChats.length > 0) {
-    return directChats;
+    return sanitizeImportedChats(directChats);
   }
 
   if (!isRecord(parsed)) {
@@ -166,64 +210,88 @@ export const parseImportableChats = (parsed: unknown): Chat[] => {
 
   const wrappedChats = parseStoredChats(parsed.chats);
   if (wrappedChats.length > 0) {
-    return wrappedChats;
+    return sanitizeImportedChats(wrappedChats);
   }
 
   const snapshotChats = parseChatsFromStorageSnapshot(parsed.storage);
   if (snapshotChats.length > 0) {
-    return snapshotChats;
+    return sanitizeImportedChats(snapshotChats);
   }
 
-  return parseChatsFromLocalDbState(parsed);
+  return sanitizeImportedChats(parseChatsFromLocalDbState(parsed));
 };
+
+export interface PersistImportedChatsResult {
+  readonly persistedIds: Set<string>;
+  readonly failed: string[];
+}
+
+/** Concurrencia acotada para no saturar IndexedDB con cientos de tx. */
+const IMPORT_PERSIST_CONCURRENCY = 5;
 
 export const persistImportedChats = async (
   userId: string,
   importedChats: readonly Chat[]
-): Promise<Set<string>> => {
-  const persistedIds = await Promise.all(
-    importedChats.map(async (chat) => {
-      try {
-        await replaceChatWithMessages(
-          {
-            id: chat.id,
-            title: chat.title,
-            created_at: new Date(chat.createdAt).toISOString(),
+): Promise<PersistImportedChatsResult> => {
+  const persistedIds = new Set<string>();
+  const failed: string[] = [];
+  let nextIndex = 0;
+
+  const persistOne = async (chat: Chat): Promise<void> => {
+    try {
+      await replaceChatWithMessages(
+        {
+          id: chat.id,
+          title: chat.title,
+          created_at: new Date(chat.createdAt).toISOString(),
+          user_id: userId,
+          model: chat.model || DEFAULT_MODEL_ID,
+          customization_prompt: chat.customizationPrompt,
+          is_pinned: chat.isPinned || false,
+        },
+        chat.messages.map((message) => {
+          const normalizedRole =
+            message.role === 'assistant' || message.role === 'user' ? message.role : 'assistant';
+
+          return {
+            id: message.id,
+            chat_id: chat.id,
+            role: normalizedRole,
+            content: message.content,
+            timestamp: message.timestamp || Date.now(),
+            model: message.model,
+            thinking_content: message.thinkingContent,
+            use_web_search: message.useWebSearch,
+            search_queries: message.searchQueries,
+            annotations: message.annotations,
+            attachments: message.attachments,
             user_id: userId,
-            model: chat.model || DEFAULT_MODEL_ID,
-            customization_prompt: chat.customizationPrompt,
-            is_pinned: chat.isPinned || false,
-          },
-          chat.messages.map((message) => {
-            const normalizedRole =
-              message.role === 'assistant' || message.role === 'user' ? message.role : 'assistant';
+          };
+        })
+      );
 
-            return {
-              id: message.id,
-              chat_id: chat.id,
-              role: normalizedRole,
-              content: message.content,
-              timestamp: message.timestamp || Date.now(),
-              model: message.model,
-              thinking_content: message.thinkingContent,
-              use_web_search: message.useWebSearch,
-              search_queries: message.searchQueries,
-              annotations: message.annotations,
-              attachments: message.attachments,
-              user_id: userId,
-            };
-          })
-        );
+      persistedIds.add(chat.id);
+    } catch (error) {
+      logger.error(`Error al persistir chat ${chat.id}:`, error);
+      failed.push(chat.id);
+    }
+  };
 
-        return chat.id;
-      } catch (error) {
-        console.error(`Error al persistir chat ${chat.id}:`, error);
-        return null;
+  const workers = Array.from(
+    { length: Math.min(IMPORT_PERSIST_CONCURRENCY, importedChats.length) },
+    async () => {
+      while (nextIndex < importedChats.length) {
+        const chat = importedChats[nextIndex];
+        nextIndex += 1;
+        if (chat) {
+          await persistOne(chat);
+        }
       }
-    })
+    }
   );
+  await Promise.all(workers);
 
-  return new Set(persistedIds.filter((id): id is string => id !== null));
+  return { persistedIds, failed };
 };
 
 /**
@@ -233,64 +301,115 @@ export async function importChatsFromFile(
   params: ImportChatsParams
 ): Promise<ImportChatsResult | null> {
   return new Promise((resolve) => {
-    try {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.json';
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    // Adjuntar al DOM: algunos navegadores ignoran click() en inputs sueltos.
+    input.style.display = 'none';
+    document.body.appendChild(input);
 
+    const cleanup = () => {
+      try {
+        input.remove();
+      } catch {
+        // Best-effort: el input ya puede no estar en el DOM.
+      }
+    };
+
+    const fail = (errorKey: Parameters<typeof t>[0], message?: string) => {
+      cleanup();
+      resolve({
+        chats: [],
+        error: message ?? t(errorKey),
+      });
+    };
+
+    try {
       input.onchange = async (event) => {
         const target = event.target as HTMLInputElement;
         const file = target.files?.[0];
         if (!file) {
+          cleanup();
           resolve(null);
           return;
         }
 
+        if (file.size === 0) {
+          fail('importInvalidFile');
+          return;
+        }
+
+        if (file.size > MAX_IMPORT_FILE_BYTES) {
+          fail('importFileTooLarge');
+          return;
+        }
+
         const reader = new FileReader();
+        reader.onerror = () => {
+          logger.error('Error al leer archivo:', reader.error);
+          fail('importInvalidFile');
+        };
+        reader.onabort = () => {
+          fail('importInvalidFile');
+        };
         reader.onload = async (loadEvent) => {
           try {
             const result = loadEvent.target?.result;
             if (typeof result !== 'string') {
-              throw new Error('Archivo inválido');
+              throw new Error(t('importInvalidFile'));
             }
 
             let parsed: unknown;
             try {
               parsed = JSON.parse(result);
             } catch {
-              throw new Error('Formato de JSON inválido');
+              throw new Error(t('importInvalidJson'));
             }
 
             const importedChats = parseImportableChats(parsed);
             if (importedChats.length === 0) {
-              throw new Error('No se encontraron chats válidos para importar');
+              throw new Error(t('importNoValidChats'));
             }
 
             // Persistir en la DB local cuando exista un perfil local activo.
-            const persistedChatIds = params.userId
+            const persisted = params.userId
               ? await persistImportedChats(params.userId, importedChats)
-              : new Set<string>();
+              : { persistedIds: new Set<string>(), failed: [] as string[] };
 
             const normalizedChats: Chat[] = importedChats.map((chat) => ({
               ...chat,
-              isPersisted: chat.isPersisted || persistedChatIds.has(chat.id),
+              isPersisted: chat.isPersisted || persisted.persistedIds.has(chat.id),
               messages: chat.messages.map((message) => ({ ...message })),
             }));
 
+            if (persisted.failed.length > 0) {
+              logger.warn(`[Import] ${persisted.failed.length} chats no se pudieron persistir:`, {
+                detail: persisted.failed,
+              });
+            }
+
+            cleanup();
             resolve({ chats: normalizedChats });
           } catch (error) {
-            console.error('Error al procesar archivo:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Formato inválido';
-            resolve({ chats: [], error: `Error al procesar el archivo: ${errorMessage}` });
+            logger.error('Error al procesar archivo:', error);
+            const errorMessage = error instanceof Error ? error.message : t('importInvalidFormat');
+            cleanup();
+            resolve({ chats: [], error: t('importProcessError', { message: errorMessage }) });
           }
         };
         reader.readAsText(file);
       };
 
+      input.oncancel = () => {
+        cleanup();
+        resolve(null);
+      };
+
       input.click();
     } catch (error) {
-      console.error('Error al importar:', error);
-      resolve({ chats: [], error: 'Error al importar chats' });
+      logger.error('Error al importar:', error);
+      cleanup();
+      resolve({ chats: [], error: t('importGenericError') });
     }
   });
 }
