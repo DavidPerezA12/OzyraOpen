@@ -1,4 +1,5 @@
 import React from 'react';
+import { t } from '../../../i18n';
 
 interface CustomizationSectionProps {
   readonly userName: string;
@@ -15,14 +16,14 @@ interface CustomizationSectionProps {
 }
 
 const PRESET_TRAITS = [
-  'friendly',
-  'concise',
-  'witty',
-  'curious',
-  'creative',
-  'empathetic',
-  'patient',
-];
+  { value: 'friendly', labelKey: 'traitFriendly' },
+  { value: 'concise', labelKey: 'traitConcise' },
+  { value: 'witty', labelKey: 'traitWitty' },
+  { value: 'curious', labelKey: 'traitCurious' },
+  { value: 'creative', labelKey: 'traitCreative' },
+  { value: 'empathetic', labelKey: 'traitEmpathetic' },
+  { value: 'patient', labelKey: 'traitPatient' },
+] as const;
 
 const CustomizationSection: React.FC<CustomizationSectionProps> = ({
   userName,
@@ -58,13 +59,13 @@ const CustomizationSection: React.FC<CustomizationSectionProps> = ({
   return (
     <div className="cfg-page">
       <div className="cfg-page-header">
-        <h2 className="cfg-page-title">Personalización</h2>
-        <p className="cfg-page-desc">Adapta cómo Ozyra Open te conoce y se comporta.</p>
+        <h2 className="cfg-page-title">{t('custTitle')}</h2>
+        <p className="cfg-page-desc">{t('custDesc')}</p>
       </div>
 
       {/* Perfil */}
       <div className="cfg-section">
-        <span className="cfg-section-label">Perfil</span>
+        <span className="cfg-section-label">{t('custProfileSection')}</span>
 
         {/* Nombre */}
         <div
@@ -72,7 +73,7 @@ const CustomizationSection: React.FC<CustomizationSectionProps> = ({
           style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.5rem' }}
         >
           <label htmlFor="customization-user-name" className="cfg-row-label">
-            ¿Cómo te llamas?
+            {t('custNameLabel')}
           </label>
           <div style={{ position: 'relative' }}>
             <input
@@ -81,7 +82,7 @@ const CustomizationSection: React.FC<CustomizationSectionProps> = ({
               value={userName}
               onChange={(e) => setUserName(e.target.value)}
               className="cfg-input"
-              placeholder="Tu nombre"
+              placeholder={t('yourNamePlaceholder')}
               maxLength={50}
             />
             <span className="cfg-char-count cfg-char-count--centered">{userName.length}/50</span>
@@ -94,7 +95,7 @@ const CustomizationSection: React.FC<CustomizationSectionProps> = ({
           style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.5rem' }}
         >
           <label htmlFor="customization-user-knowledge" className="cfg-row-label">
-            ¿A qué te dedicas?
+            {t('custRoleLabel')}
           </label>
           <div style={{ position: 'relative' }}>
             <input
@@ -103,7 +104,7 @@ const CustomizationSection: React.FC<CustomizationSectionProps> = ({
               value={userKnowledge}
               onChange={(e) => setUserKnowledge(e.target.value)}
               className="cfg-input"
-              placeholder="Desarrollador, estudiante, diseñador…"
+              placeholder={t('professionPlaceholder')}
               maxLength={100}
             />
             <span className="cfg-char-count cfg-char-count--centered">
@@ -119,10 +120,10 @@ const CustomizationSection: React.FC<CustomizationSectionProps> = ({
         >
           <div>
             <label htmlFor="customization-user-traits" className="cfg-row-label">
-              Personalidad de Ozyra
+              {t('custTraitsLabel')}
             </label>
             <p className="cfg-row-hint" style={{ marginTop: '0.125rem' }}>
-              Selecciona rasgos o escríbelos separados por comas.
+              {t('custTraitsHint')}
             </p>
           </div>
           <div style={{ position: 'relative' }}>
@@ -139,16 +140,16 @@ const CustomizationSection: React.FC<CustomizationSectionProps> = ({
           </div>
           <div className="cfg-traits">
             {PRESET_TRAITS.map((trait) => {
-              const active = traitsArray.includes(trait.toLowerCase());
+              const active = traitsArray.includes(trait.value);
               return (
                 <button
-                  key={trait}
+                  key={trait.value}
                   type="button"
-                  onClick={() => toggleTrait(trait)}
+                  onClick={() => toggleTrait(trait.value)}
                   className={`cfg-trait ${active ? 'cfg-trait--active' : ''}`}
                   aria-pressed={active}
                 >
-                  {trait}
+                  {t(trait.labelKey)}
                 </button>
               );
             })}
@@ -161,7 +162,7 @@ const CustomizationSection: React.FC<CustomizationSectionProps> = ({
           style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.5rem' }}
         >
           <label htmlFor="customization-user-additional-info" className="cfg-row-label">
-            ¿Algo más que deba saber?
+            {t('custMoreLabel')}
           </label>
           <div style={{ position: 'relative' }}>
             <textarea
@@ -171,7 +172,7 @@ const CustomizationSection: React.FC<CustomizationSectionProps> = ({
               rows={4}
               className="cfg-input"
               style={{ resize: 'none', paddingBottom: '1.5rem' }}
-              placeholder="Intereses, valores o preferencias que considerar…"
+              placeholder={t('userKnowledgePlaceholder')}
               maxLength={3000}
             />
             <span className="cfg-char-count cfg-char-count--bottom">
@@ -183,21 +184,22 @@ const CustomizationSection: React.FC<CustomizationSectionProps> = ({
 
       {/* Comportamiento */}
       <div className="cfg-section">
-        <span className="cfg-section-label">Comportamiento</span>
+        <span className="cfg-section-label">{t('custBehaviorSection')}</span>
 
         <div className="cfg-row cfg-row--border">
           <div className="cfg-row-info">
-            <span className="cfg-row-label">Mostrar razonamiento</span>
-            <span className="cfg-row-hint">
-              Muestra el bloque de pensamiento de modelos con razonamiento extendido.
+            <span className="cfg-row-label" id="customization-reasoning-label">
+              {t('custReasoningLabel')}
             </span>
+            <span className="cfg-row-hint">{t('custReasoningHint')}</span>
           </div>
           <button
             type="button"
             onClick={() => setShowReasoning(!showReasoning)}
             className={`cfg-toggle ${showReasoning ? 'cfg-toggle--on' : ''}`}
-            aria-label="Mostrar razonamiento"
-            aria-pressed={showReasoning}
+            role="switch"
+            aria-checked={showReasoning}
+            aria-labelledby="customization-reasoning-label"
           >
             <span className="cfg-toggle__knob" />
           </button>
@@ -205,10 +207,8 @@ const CustomizationSection: React.FC<CustomizationSectionProps> = ({
 
         <div className="cfg-row">
           <div className="cfg-row-info">
-            <span className="cfg-row-label">Ejecución de herramientas</span>
-            <span className="cfg-row-hint">
-              Runtime local preparado; el control del compositor está desactivado temporalmente.
-            </span>
+            <span className="cfg-row-label">{t('custToolsLabel')}</span>
+            <span className="cfg-row-hint">{t('custToolsHint')}</span>
           </div>
         </div>
       </div>
@@ -216,7 +216,7 @@ const CustomizationSection: React.FC<CustomizationSectionProps> = ({
       {/* Guardar */}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button type="button" onClick={onSavePreferences} className="cfg-btn cfg-btn--primary">
-          Guardar cambios
+          {t('custSave')}
         </button>
       </div>
     </div>

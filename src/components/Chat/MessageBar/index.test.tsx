@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Chat } from '../../../types';
 import ChatMessageBar from './index';
 import type { ChatMessageBarProps } from './types';
+import { t } from '../../../i18n';
 
 const activeChat: Chat = {
   id: 'chat-1',
@@ -60,7 +61,7 @@ describe('ChatMessageBar', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Personalizar esta conversación' }));
+    fireEvent.click(screen.getByRole('button', { name: t('customizeChat') }));
 
     expect(toggleChatCustomizationPopup).toHaveBeenCalledOnce();
   });
@@ -77,9 +78,7 @@ describe('ChatMessageBar', () => {
       />
     );
 
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Crea una conversación antes de personalizarla' })
-    );
+    fireEvent.click(screen.getByRole('button', { name: t('customizeChatDisabled') }));
 
     expect(toggleChatCustomizationPopup).not.toHaveBeenCalled();
   });

@@ -5,6 +5,7 @@
 
 import React, { useEffect, useReducer, useRef } from 'react';
 import { logger } from '../../utils/logger';
+import { readLocalStorage, writeLocalStorage } from '../../utils/browserStorage';
 import CustomizationSection from './sections/CustomizationSection';
 import HistorySection from './sections/HistorySection';
 import LocalProfileSection from './sections/LocalProfileSection';
@@ -14,7 +15,7 @@ import SearchSection from './sections/SearchSection';
 import ShortcutsSection from './sections/ShortcutsSection';
 import SettingsNav from './SettingsNav';
 import SettingsTopBar from './SettingsTopBar';
-import type { Language, TranslationKey } from '../../i18n';
+import type { Language, TranslationKey, TranslationParams } from '../../i18n';
 import type { SettingsTab } from './types';
 
 interface CapabilityFiltersState {
@@ -57,12 +58,8 @@ interface SettingsModalInitialState {
 }
 
 const getInitialShowReasoning = (): boolean => {
-  try {
-    const stored = localStorage.getItem('ozyra:ui:showThinking');
-    return stored === null ? true : stored === '1';
-  } catch {
-    return true;
-  }
+  const stored = readLocalStorage('ozyra:ui:showThinking');
+  return stored === null ? true : stored === '1';
 };
 
 const createSettingsModalState = ({
@@ -111,7 +108,7 @@ export interface SettingsModalProps {
   readonly handleExport: () => void;
   readonly language: Language;
   readonly setLanguage: (language: Language) => void;
-  readonly t: (key: TranslationKey) => string;
+  readonly t: (key: TranslationKey, params?: TranslationParams) => string;
 }
 
 // ─────────────────────────────────────────────
@@ -192,13 +189,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleThinkingPreference = (next: boolean) => {
     updateSettingsState({ showReasoning: next });
-    try {
-      localStorage.setItem('ozyra:ui:showThinking', next ? '1' : '0');
+    if (writeLocalStorage('ozyra:ui:showThinking', next ? '1' : '0')) {
       window.dispatchEvent(
         new CustomEvent('ozyra:ui:showThinking-changed', { detail: { value: next } })
       );
-    } catch (error) {
-      logger.error('Error al guardar preferencia de razonamiento', error);
+    } else {
+      logger.error('Error al guardar preferencia de razonamiento');
     }
   };
 
@@ -288,7 +284,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     <dialog
       ref={dialogRef}
       className="cfg-shell"
-      aria-label="Ajustes"
+      aria-label={t('sidebarSettings')}
       onCancel={(event) => {
         event.preventDefault();
         setShowSettings(false);

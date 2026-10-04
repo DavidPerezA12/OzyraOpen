@@ -45,6 +45,8 @@ import { glmModels } from './GLM';
 import { googleModels } from './Google';
 import { openAIModels } from './OpenAI';
 import type { ProviderModelList } from './types';
+import { getBrowserLocalStorage } from '../utils/browserStorage';
+import { logger } from '../utils/logger';
 
 const OPENROUTER_MODELS_CACHE_KEY = 'ozyra_openrouter_models_cache';
 const OPENROUTER_MODELS_CACHE_META_KEY = 'ozyra_openrouter_models_cache_meta';
@@ -215,19 +217,8 @@ const convertToNewModelFormat = (oldModels: ProviderModelList): ModelInfo[] => {
   }));
 };
 
-const getLocalStorage = (): Storage | null => {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-};
-
 const loadCachedOpenRouterModels = (): ModelInfo[] => {
-  const storage = getLocalStorage();
+  const storage = getBrowserLocalStorage();
   if (!storage) {
     return [];
   }
@@ -249,7 +240,7 @@ const loadCachedOpenRouterModels = (): ModelInfo[] => {
       }
     }
   } catch (e) {
-    console.error('Error loading cached OpenRouter models', e);
+    logger.error('Error loading cached OpenRouter models', e);
   }
   return [];
 };
@@ -285,7 +276,7 @@ const dedupeModels = (models: readonly ModelInfo[]): ModelInfo[] => {
 };
 
 const readModelUsageRecords = (): ModelUsageRecord[] => {
-  const storage = getLocalStorage();
+  const storage = getBrowserLocalStorage();
   if (!storage) {
     return [];
   }
@@ -312,20 +303,20 @@ const readModelUsageRecords = (): ModelUsageRecord[] => {
       })
       .sort((a, b) => b.lastUsedAt - a.lastUsedAt);
   } catch (error) {
-    console.warn('[Models] Failed to read model usage stats', error);
+    logger.warn('[Models] Failed to read model usage stats', { detail: error });
     return [];
   }
 };
 
 const writeModelUsageRecords = (records: readonly ModelUsageRecord[]): void => {
-  const storage = getLocalStorage();
+  const storage = getBrowserLocalStorage();
   if (!storage) {
     return;
   }
   try {
     storage.setItem(MODEL_USAGE_KEY, JSON.stringify(records.slice(0, 40)));
   } catch (error) {
-    console.warn('[Models] Failed to save model usage stats', error);
+    logger.warn('[Models] Failed to save model usage stats', { detail: error });
   }
 };
 
@@ -374,7 +365,7 @@ export const getValidModelId = (requestedModelId: string | null | undefined): st
 
   // Si el modelo solicitado no es válido o no existe, usar el por defecto
   const fallbackModelId = getDefaultAvailableModelId();
-  console.warn(
+  logger.warn(
     `Modelo solicitado "${requestedModelId}" no es válido o no está disponible. Usando por defecto: ${fallbackModelId}`
   );
   return fallbackModelId;
@@ -561,7 +552,7 @@ export const mapOpenRouterModelToInfo = (model: OpenRouterApiModel): ModelInfo =
 };
 
 export const getModelCatalogMeta = (): ModelCatalogMeta => {
-  const storage = getLocalStorage();
+  const storage = getBrowserLocalStorage();
   if (!storage) {
     return {
       source: cachedOpenRouterModels.length > 0 ? 'openrouter' : 'fallback',
@@ -671,7 +662,7 @@ export const updateAvailableModels = (newModels: ModelInfo[]) => {
 
   const serializableModels = availableModels.map(getSerializableModel);
 
-  const storage = getLocalStorage();
+  const storage = getBrowserLocalStorage();
   if (!storage) {
     emitModelCatalogUpdated();
     return;
@@ -687,7 +678,7 @@ export const updateAvailableModels = (newModels: ModelInfo[]) => {
       } satisfies ModelCatalogMeta)
     );
   } catch (e) {
-    console.error('Error saving OpenRouter models cache to localStorage', e);
+    logger.error('Error saving OpenRouter models cache to localStorage', e);
   } finally {
     emitModelCatalogUpdated();
   }

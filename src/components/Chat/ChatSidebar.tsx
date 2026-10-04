@@ -5,6 +5,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Search, X } from 'lucide-react';
 import { type Chat } from '../../types';
+import { getCurrentLanguage, t, type Language } from '../../i18n';
 
 // ============================================================================
 // ICONS
@@ -128,6 +129,8 @@ interface ChatItemProps {
   readonly setCurrentChat: (chat: Chat) => void;
   readonly updateChatTitle: (chatId: string, newTitle: string) => void;
   readonly isGenerating: boolean;
+  /** Idioma activo; invalida el memo de ChatItem cuando cambia. */
+  readonly language: Language;
 }
 
 interface ChatSidebarProps {
@@ -145,8 +148,15 @@ interface ChatSidebarProps {
   readonly generatingChatIds: readonly string[];
 }
 
-type DateGroupKey = 'Hoy' | 'Ayer' | 'Esta semana' | 'Este mes' | 'Más antiguos';
-const DATE_GROUP_ORDER: DateGroupKey[] = ['Hoy', 'Ayer', 'Esta semana', 'Este mes', 'Más antiguos'];
+type DateGroupKey = 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'older';
+const DATE_GROUP_ORDER: DateGroupKey[] = ['today', 'yesterday', 'thisWeek', 'thisMonth', 'older'];
+const DATE_GROUP_LABEL_KEYS = {
+  today: 'dateToday',
+  yesterday: 'dateYesterday',
+  thisWeek: 'dateThisWeek',
+  thisMonth: 'dateThisMonth',
+  older: 'dateOlder',
+} as const;
 
 const getLastActivityTimestamp = (chat: Chat): number => {
   let latest = chat.createdAt;
@@ -167,18 +177,18 @@ const getDateGroup = (timestamp: number): DateGroupKey => {
   const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
 
   if (timestamp >= today.getTime()) {
-    return 'Hoy';
+    return 'today';
   }
   if (timestamp >= yesterday.getTime()) {
-    return 'Ayer';
+    return 'yesterday';
   }
   if (timestamp >= weekStart.getTime()) {
-    return 'Esta semana';
+    return 'thisWeek';
   }
   if (timestamp >= monthStart.getTime()) {
-    return 'Este mes';
+    return 'thisMonth';
   }
-  return 'Más antiguos';
+  return 'older';
 };
 
 // ============================================================================
@@ -231,7 +241,7 @@ const ChatItemComponent: React.FC<ChatItemProps> = ({
       updateChatTitle(chat.id, trimmed);
       setIsEditingTitle(false);
     } else {
-      setEditedTitle(chat.title || `Conversación ${chat.id.slice(-4)}`);
+      setEditedTitle(chat.title || t('untitledChatWithId', { suffix: chat.id.slice(-4) }));
       setIsEditingTitle(false);
     }
   };
@@ -248,7 +258,7 @@ const ChatItemComponent: React.FC<ChatItemProps> = ({
     }
   };
 
-  const title = chat.title || `Conversación ${chat.id.slice(-4)}`;
+  const title = chat.title || t('untitledChatWithId', { suffix: chat.id.slice(-4) });
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -265,7 +275,7 @@ const ChatItemComponent: React.FC<ChatItemProps> = ({
             type="text"
             value={editedTitle}
             onChange={(e) => setEditedTitle(e.target.value)}
-            aria-label="Título de la conversación"
+            aria-label={t('chatTitleInputLabel')}
             className="flex-1 px-2 py-1 rounded text-xs focus:outline-none"
             style={{
               background: 'var(--bg-elevated)',
@@ -313,7 +323,7 @@ const ChatItemComponent: React.FC<ChatItemProps> = ({
             type="button"
             className="chat-item-menu-trigger absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity z-10"
             onClick={() => setShowDropdown((current) => !current)}
-            aria-label={`Más acciones para ${title}`}
+            aria-label={t('chatMoreActions', { title })}
             aria-expanded={showDropdown}
           >
             <span className="chat-item-more-btn">
@@ -328,7 +338,7 @@ const ChatItemComponent: React.FC<ChatItemProps> = ({
         <div className="chat-item-menu animate-slide-down">
           {[
             {
-              label: 'Editar título',
+              label: t('chatEditTitle'),
               icon: <EditIcon />,
               onClick: () => {
                 setEditedTitle(title);
@@ -337,7 +347,7 @@ const ChatItemComponent: React.FC<ChatItemProps> = ({
               },
             },
             {
-              label: isPinned ? 'Desfijar' : 'Fijar',
+              label: isPinned ? t('chatUnpin') : t('chatPin'),
               icon: isPinned ? <PinOffIcon /> : <PinIcon />,
               onClick: () => {
                 togglePinChat(chat.id);
@@ -345,16 +355,16 @@ const ChatItemComponent: React.FC<ChatItemProps> = ({
               },
             },
             {
-              label: 'Exportar',
+              label: t('export'),
               icon: <DownloadIcon />,
               onClick: () => {
                 exportChat(chat);
                 setShowDropdown(false);
               },
             },
-          ].map((item) => (
+          ].map((item, index) => (
             <button
-              key={item.label}
+              key={`${chat.id}-action-${index}`}
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
@@ -379,7 +389,7 @@ const ChatItemComponent: React.FC<ChatItemProps> = ({
             <span className="flex items-center justify-center">
               <TrashIcon />
             </span>
-            <span>Eliminar</span>
+            <span>{t('chatDelete')}</span>
           </button>
         </div>
       )}
@@ -394,7 +404,8 @@ const ChatItem = React.memo(
     prev.chat.title === next.chat.title &&
     (prev.chat.isPinned ?? false) === (next.chat.isPinned ?? false) &&
     prev.currentChat?.id === next.currentChat?.id &&
-    prev.isGenerating === next.isGenerating
+    prev.isGenerating === next.isGenerating &&
+    prev.language === next.language
 );
 
 // ============================================================================
@@ -415,6 +426,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
   generatingChatIds,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const activeLanguage = getCurrentLanguage();
   const closeOnMobile = () => {
     if (window.matchMedia('(max-width: 639px)').matches) {
       setSidebarOpen(false);
@@ -451,11 +463,11 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
   const groupedChats = useMemo(() => {
     const pinned: Chat[] = [];
     const groups: Record<DateGroupKey, Chat[]> = {
-      Hoy: [],
-      Ayer: [],
-      'Esta semana': [],
-      'Este mes': [],
-      'Más antiguos': [],
+      today: [],
+      yesterday: [],
+      thisWeek: [],
+      thisMonth: [],
+      older: [],
     };
     for (const chat of filteredChats) {
       if (chat.isPinned) {
@@ -471,7 +483,8 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
   return (
     <div
       className="sidebar-panel flex-shrink-0 z-30 absolute sm:relative h-full sm:h-auto transition-all duration-300 ease-in-out overflow-hidden"
-      style={{ width: sidebarOpen ? '260px' : '0' }}
+      style={{ width: sidebarOpen ? '260px' : '0', visibility: sidebarOpen ? 'visible' : 'hidden' }}
+      aria-hidden={!sidebarOpen}
     >
       {/* Header */}
       <div className="sidebar-header">
@@ -482,7 +495,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
           type="button"
           onClick={() => setSidebarOpen(false)}
           className="sidebar-close-btn sm:hidden"
-          aria-label="Cerrar barra lateral"
+          aria-label={t('sidebarClose')}
         >
           <X size={17} />
         </button>
@@ -492,20 +505,23 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
       <div className="px-3 pb-3">
         <button type="button" onClick={handleCreateNewChatClick} className="sidebar-new-chat-btn">
           <Plus size={14} strokeWidth={2.5} />
-          Nuevo chat
+          {t('sidebarNewChat')}
         </button>
       </div>
 
       {/* Search */}
       <div className="px-3 pb-3">
         <div className="sidebar-search-container">
-          <Search size={13} className="flex-shrink-0 opacity-70" />
+          <Search size={13} className="flex-shrink-0 opacity-70" aria-hidden="true" />
+          <label htmlFor="sidebar-chat-search" className="sr-only">
+            {t('sidebarSearchLabel')}
+          </label>
           <input
+            id="sidebar-chat-search"
             type="text"
-            aria-label="Buscar conversaciones"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar conversaciones…"
+            placeholder={t('sidebarSearchPlaceholder')}
           />
         </div>
       </div>
@@ -517,13 +533,13 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
             className="text-center py-8"
             style={{ color: 'var(--text-muted)', fontSize: '0.8125rem' }}
           >
-            {searchQuery ? 'Sin resultados' : 'Sin conversaciones'}
+            {searchQuery ? t('sidebarNoResults') : t('sidebarNoChats')}
           </div>
         ) : (
           <>
             {groupedChats.pinned.length > 0 && (
               <>
-                <div className="sidebar-group-label">Fijados</div>
+                <div className="sidebar-group-label">{t('sidebarPinned')}</div>
                 {groupedChats.pinned.map((c) => (
                   <ChatItem
                     key={c.id}
@@ -535,6 +551,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
                     setCurrentChat={selectChat}
                     updateChatTitle={updateChatTitle}
                     isGenerating={generatingChatIdSet.has(c.id)}
+                    language={activeLanguage}
                   />
                 ))}
               </>
@@ -546,7 +563,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
               }
               return (
                 <React.Fragment key={groupKey}>
-                  <div className="sidebar-group-label">{groupKey}</div>
+                  <div className="sidebar-group-label">{t(DATE_GROUP_LABEL_KEYS[groupKey])}</div>
                   {gc.map((c) => (
                     <ChatItem
                       key={c.id}
@@ -558,6 +575,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
                       setCurrentChat={selectChat}
                       updateChatTitle={updateChatTitle}
                       isGenerating={generatingChatIdSet.has(c.id)}
+                      language={activeLanguage}
                     />
                   ))}
                 </React.Fragment>
@@ -578,7 +596,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
           className="sidebar-settings-btn"
         >
           <span className="profile-name" style={{ fontSize: '0.875rem', fontWeight: 600 }}>
-            Ajustes
+            {t('sidebarSettings')}
           </span>
         </button>
       </div>

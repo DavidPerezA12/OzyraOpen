@@ -1,4 +1,5 @@
 import { Plus } from 'lucide-react';
+import { t } from '../../i18n';
 
 interface CollapsedChatActionsProps {
   readonly onOpenSidebar: () => void;
@@ -21,7 +22,7 @@ export function CollapsedChatActions({ onOpenSidebar, onNewChat }: CollapsedChat
           event.currentTarget.style.background = 'transparent';
           event.currentTarget.style.color = 'var(--text-muted)';
         }}
-        aria-label="Abrir barra lateral"
+        aria-label={t('openSidebar')}
       >
         <svg
           width="18"
@@ -42,7 +43,7 @@ export function CollapsedChatActions({ onOpenSidebar, onNewChat }: CollapsedChat
         onClick={onNewChat}
         className="flex items-center justify-center w-7 h-7 rounded-md transition-colors"
         style={{ background: 'var(--accent)', color: 'var(--accent-text)' }}
-        aria-label="Nueva conversación"
+        aria-label={t('newConversation')}
       >
         <Plus size={14} />
       </button>

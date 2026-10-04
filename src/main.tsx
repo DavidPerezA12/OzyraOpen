@@ -7,6 +7,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { logger } from './utils/logger';
 import './index.css';
 
 const initializeApp = () => {
@@ -26,18 +27,32 @@ const initializeApp = () => {
     </ErrorBoundary>
   );
 
-  // Desactivar StrictMode en desarrollo para evitar dobles montajes (flicker en Dev)
-  const useStrict = import.meta.env.PROD;
-  root.render(useStrict ? <StrictMode>{appTree}</StrictMode> : appTree);
+  // StrictMode siempre: en producción es un no-op, en desarrollo expone
+  // dobles montajes/efectos antes de que lleguen a producción.
+  root.render(<StrictMode>{appTree}</StrictMode>);
 
-  console.info('🚀 Ozyra Open application initialized successfully');
+  logger.info('🚀 Ozyra Open application initialized successfully');
 
   if (import.meta.env.DEV) {
-    console.info('🔧 Running in development mode');
+    logger.info('🔧 Running in development mode');
   }
 };
 
 function createSecureErrorElement(error: Error): HTMLElement {
+  // Último recurso sin árbol React (sin i18n): ES/EN según el navegador.
+  const useEnglish =
+    typeof navigator !== 'undefined' && !navigator.language.toLowerCase().startsWith('es');
+  const strings = useEnglish
+    ? {
+        title: 'Initialization Error',
+        body: 'The application could not be initialized.',
+        reload: 'Reload Page',
+      }
+    : {
+        title: 'Error de Inicialización',
+        body: 'No se pudo inicializar la aplicación.',
+        reload: 'Recargar Página',
+      };
   const container = document.createElement('div');
   container.style.cssText = `
     display: flex;
@@ -62,11 +77,11 @@ function createSecureErrorElement(error: Error): HTMLElement {
 
   const title = document.createElement('h1');
   title.style.cssText = 'color: #dc2626; margin-bottom: 1rem;';
-  title.textContent = 'Error de Inicialización';
+  title.textContent = strings.title;
 
   const description = document.createElement('p');
   description.style.cssText = 'color: #6b7280; margin-bottom: 1rem;';
-  description.textContent = 'No se pudo inicializar la aplicación.';
+  description.textContent = strings.body;
 
   const details = document.createElement('p');
   details.style.cssText =
@@ -82,7 +97,7 @@ function createSecureErrorElement(error: Error): HTMLElement {
     border-radius: 4px;
     cursor: pointer;
   `;
-  reloadButton.textContent = 'Recargar Página';
+  reloadButton.textContent = strings.reload;
   reloadButton.addEventListener('click', () => window.location.reload());
 
   card.appendChild(title);
@@ -99,6 +114,7 @@ try {
   const shouldSilence = import.meta.env.PROD || !debugEnabled;
 
   if (shouldSilence) {
+    // eslint-disable-next-line no-console -- este bloque ES el mecanismo de parcheo de consola
     const originalError = console.error.bind(console);
 
     const maskSensitive = (text: string) =>
@@ -107,9 +123,12 @@ try {
         .replace(/[A-Za-z0-9-_]{24,}/g, '[id]')
         .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]');
 
+    // eslint-disable-next-line no-console -- parcheo intencional en producción
     console.info = () => {};
+    // eslint-disable-next-line no-console -- parcheo intencional en producción
     console.warn = () => {};
 
+    // eslint-disable-next-line no-console -- parcheo intencional en producción
     console.error = (...args: unknown[]) => {
       try {
         const sanitized = args.map((a) => {
@@ -133,6 +152,6 @@ try {
 
   initializeApp();
 } catch (error) {
-  console.error('Failed to initialize application:', error);
+  logger.error('Failed to initialize application', error);
   document.body.appendChild(createSecureErrorElement(error as Error));
 }

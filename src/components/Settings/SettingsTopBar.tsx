@@ -1,3 +1,5 @@
+import { t } from '../../i18n';
+
 interface SettingsTopBarProps {
   readonly isDarkMode: boolean;
   readonly onBack: () => void;
@@ -7,7 +9,7 @@ interface SettingsTopBarProps {
 export default function SettingsTopBar({ isDarkMode, onBack, onToggleTheme }: SettingsTopBarProps) {
   return (
     <header className="cfg-topbar">
-      <button type="button" onClick={onBack} className="cfg-back" aria-label="Volver al chat">
+      <button type="button" onClick={onBack} className="cfg-back" aria-label={t('backToChat')}>
         <svg
           width="15"
           height="15"
@@ -20,14 +22,14 @@ export default function SettingsTopBar({ isDarkMode, onBack, onToggleTheme }: Se
           <line x1="19" y1="12" x2="5" y2="12" />
           <polyline points="12 19 5 12 12 5" />
         </svg>
-        Volver al chat
+        {t('backToChat')}
       </button>
 
       <button
         type="button"
         onClick={onToggleTheme}
         className="cfg-theme-btn"
-        aria-label="Cambiar tema"
+        aria-label={t('changeTheme')}
       >
         {isDarkMode ? (
           <svg

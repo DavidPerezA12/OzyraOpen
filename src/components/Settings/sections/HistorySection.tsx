@@ -1,13 +1,13 @@
 import { AlertTriangle, DownloadCloud, Trash2, UploadCloud } from 'lucide-react';
 import React from 'react';
-import type { TranslationKey } from '../../../i18n';
+import type { TranslationKey, TranslationParams } from '../../../i18n';
 
 interface HistorySectionProps {
   readonly isDarkMode: boolean;
   readonly onImport: () => void;
   readonly onExport: () => void;
   readonly onDeleteAll: () => void;
-  readonly t: (key: TranslationKey) => string;
+  readonly t: (key: TranslationKey, params?: TranslationParams) => string;
 }
 
 const HistorySection: React.FC<HistorySectionProps> = ({ onImport, onExport, onDeleteAll, t }) => {

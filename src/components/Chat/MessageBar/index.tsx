@@ -10,6 +10,7 @@ import { SendButton } from './SendButton';
 import type { ChatMessageBarProps, ReasoningLevel } from './types';
 import { useAttachments } from './useAttachments';
 import { useMessageInput } from './useMessageInput';
+import { t } from '../../../i18n';
 
 const ChatMessageBar = ({
   uiState,
@@ -70,14 +71,16 @@ const ChatMessageBar = ({
   return (
     <>
       {showChatCustomization && (
-        <ChatCustomizationPanel
-          value={currentChatCustomizationInput}
-          setValue={setCurrentChatCustomizationInput}
-          setShowChatCustomization={setShowChatCustomization}
-          handleSaveChatCustomization={handleSaveChatCustomization}
-          handleImproveChatCustomization={handleImproveChatCustomization}
-          isImprovingChatCustomization={isImprovingChatCustomization}
-        />
+        <div id="chat-customization-panel">
+          <ChatCustomizationPanel
+            value={currentChatCustomizationInput}
+            setValue={setCurrentChatCustomizationInput}
+            setShowChatCustomization={setShowChatCustomization}
+            handleSaveChatCustomization={handleSaveChatCustomization}
+            handleImproveChatCustomization={handleImproveChatCustomization}
+            isImprovingChatCustomization={isImprovingChatCustomization}
+          />
+        </div>
       )}
 
       <div className="composer-wrap relative flex flex-col" aria-busy={isLoading}>
@@ -115,6 +118,9 @@ const ChatMessageBar = ({
               }
               for (let i = 0; i < items.length; i++) {
                 const item = items[i];
+                if (!item) {
+                  continue;
+                }
                 if (item.kind === 'file') {
                   const file = item.getAsFile();
                   if (file) {
@@ -123,8 +129,8 @@ const ChatMessageBar = ({
                 }
               }
             }}
-            placeholder="Escribe tu mensaje aquí…"
-            aria-label="Mensaje"
+            placeholder={t('composerPlaceholder')}
+            aria-label={t('composerLabel')}
             className="composer-textarea custom-scrollbar"
             rows={1}
             onCompositionStart={() => setIsComposing(true)}
@@ -168,17 +174,10 @@ const ChatMessageBar = ({
                   }
                 }}
                 className={`composer-icon-btn ${showChatCustomization ? 'active' : ''} ${isLoading || !currentChat ? 'is-disabled' : ''}`}
-                title={
-                  currentChat
-                    ? 'Personalizar esta conversación'
-                    : 'Crea una conversación antes de personalizarla'
-                }
-                aria-label={
-                  currentChat
-                    ? 'Personalizar esta conversación'
-                    : 'Crea una conversación antes de personalizarla'
-                }
-                aria-pressed={showChatCustomization}
+                title={currentChat ? t('customizeChat') : t('customizeChatDisabled')}
+                aria-label={currentChat ? t('customizeChat') : t('customizeChatDisabled')}
+                aria-expanded={showChatCustomization}
+                aria-controls="chat-customization-panel"
                 aria-disabled={isLoading || !currentChat}
               >
                 <SlidersHorizontal size={15} />

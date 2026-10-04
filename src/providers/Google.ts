@@ -1,11 +1,10 @@
-import { SiGooglegemini } from 'react-icons/si';
 import type { ProviderModelList } from './types';
 
 export const googleModels: ProviderModelList = [
   {
     id: 'google/gemini-2.0-flash-exp:free',
     name: 'Gemini 2.0 Flash',
-    icon: SiGooglegemini,
+    icon: 'google',
     provider: 'openrouter',
     displayProviderName: 'Google',
     isReasoning: false,

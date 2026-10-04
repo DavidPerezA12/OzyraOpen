@@ -23,6 +23,7 @@
 
 import React, { useState, useEffect, useCallback, useLayoutEffect, useRef } from 'react';
 import { ArrowDown } from 'lucide-react';
+import { t } from '../../i18n';
 
 /**
  * Props para el componente ScrollToBottom
@@ -191,8 +192,8 @@ export const ScrollToBottom: React.FC<ScrollToBottomProps> = ({
     <button
       type="button"
       onClick={scrollToBottom}
-      aria-label="Desplazar al final"
-      title="Ir al final de la conversación"
+      aria-label={t('scrollToBottom')}
+      title={t('scrollToBottomTitle')}
       className={`
         fixed bottom-24 right-6 z-50
         flex items-center justify-center

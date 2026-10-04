@@ -43,6 +43,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import type { Chat } from '../../types';
+import { getCurrentLanguage, t, translate } from '../../i18n';
 
 /**
  * Tipos de comandos disponibles
@@ -117,7 +118,7 @@ const fuzzyMatch = (text: string, query: string): { matches: boolean; score: num
     matchPositions.length > 1
       ? matchPositions.reduce(
           (sum, position, index, positions) =>
-            index > 0 ? sum + (position - positions[index - 1]) : sum,
+            index > 0 ? sum + (position - (positions[index - 1] ?? position)) : sum,
           0
         ) /
         (matchPositions.length - 1)
@@ -215,12 +216,13 @@ const useCommandPaletteCommands = ({
   onSelectChat,
   onExecuteCommand,
 }: UseCommandPaletteCommandsParams) => {
+  const activeLanguage = getCurrentLanguage();
   const defaultCommands = useMemo<Command[]>(
     () => [
       {
         id: 'new-chat',
-        label: 'Crear nuevo chat',
-        description: 'Iniciar una nueva conversación',
+        label: translate(activeLanguage, 'cpNewChat'),
+        description: translate(activeLanguage, 'cpNewChatDesc'),
         icon: Plus,
         type: 'action',
         shortcut: 'Ctrl+N',
@@ -232,8 +234,8 @@ const useCommandPaletteCommands = ({
       },
       {
         id: 'settings',
-        label: 'Abrir configuración',
-        description: 'Ajustar preferencias de la aplicación',
+        label: translate(activeLanguage, 'cpOpenSettings'),
+        description: translate(activeLanguage, 'cpOpenSettingsDesc'),
         icon: Settings,
         type: 'navigation',
         shortcut: 'Ctrl+,',
@@ -245,8 +247,8 @@ const useCommandPaletteCommands = ({
       },
       {
         id: 'export-chat',
-        label: 'Exportar chat actual',
-        description: 'Descargar conversación en varios formatos',
+        label: translate(activeLanguage, 'cpExportChat'),
+        description: translate(activeLanguage, 'cpExportChatDesc'),
         icon: Download,
         type: 'action',
         action: () => {
@@ -257,8 +259,8 @@ const useCommandPaletteCommands = ({
       },
       {
         id: 'delete-chat',
-        label: 'Eliminar chat',
-        description: 'Borrar la conversación actual',
+        label: translate(activeLanguage, 'cpDeleteChat'),
+        description: translate(activeLanguage, 'cpDeleteChatDesc'),
         icon: Trash2,
         type: 'action',
         action: () => {
@@ -269,8 +271,8 @@ const useCommandPaletteCommands = ({
       },
       {
         id: 'toggle-theme',
-        label: 'Cambiar tema',
-        description: 'Alternar entre modo claro y oscuro',
+        label: translate(activeLanguage, 'cpToggleTheme'),
+        description: translate(activeLanguage, 'cpToggleThemeDesc'),
         icon: isDarkMode ? Sun : Moon,
         type: 'setting',
         action: () => {
@@ -280,7 +282,7 @@ const useCommandPaletteCommands = ({
         keywords: ['tema', 'theme', 'oscuro', 'claro', 'dark', 'light'],
       },
     ],
-    [isDarkMode, onClose, onExecuteCommand]
+    [isDarkMode, onClose, onExecuteCommand, activeLanguage]
   );
 
   const allCommands = useMemo(
@@ -292,8 +294,8 @@ const useCommandPaletteCommands = ({
     () =>
       chats.map((chat) => ({
         id: `chat-${chat.id}`,
-        label: chat.title || 'Sin título',
-        description: `${chat.messages.length} mensajes`,
+        label: chat.title || translate(activeLanguage, 'untitledChat'),
+        description: translate(activeLanguage, 'messagesCount', { count: chat.messages.length }),
         icon: MessageSquare,
         type: 'chat',
         action: () => {
@@ -305,7 +307,7 @@ const useCommandPaletteCommands = ({
           ...chat.messages.map((message) => message.content.substring(0, 50)),
         ],
       })),
-    [chats, onClose, onSelectChat]
+    [chats, onClose, onSelectChat, activeLanguage]
   );
 
   const filteredCommands = useMemo(() => {
@@ -470,7 +472,7 @@ const CommandPaletteDialog: React.FC<CommandPaletteDialogProps> = ({
   return (
     <dialog
       ref={dialogRef}
-      aria-label="Paleta de comandos"
+      aria-label={t('cpTitle')}
       className="fixed inset-0 z-[100] m-0 h-full max-h-none w-full max-w-none border-0 bg-transparent p-0"
       onCancel={(event) => {
         event.preventDefault();
@@ -478,9 +480,8 @@ const CommandPaletteDialog: React.FC<CommandPaletteDialogProps> = ({
       }}
     >
       {/* Backdrop */}
-      <button
-        type="button"
-        aria-label="Cerrar paleta de comandos"
+      <div
+        aria-hidden="true"
         className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] animate-fade-in"
         onClick={onClose}
       />
@@ -494,11 +495,11 @@ const CommandPaletteDialog: React.FC<CommandPaletteDialogProps> = ({
               <input
                 ref={inputRef}
                 type="text"
-                aria-label="Buscar chats y comandos"
+                aria-label={t('cpSearchLabel')}
                 value={query}
                 onChange={(e) => handleQueryChange(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Buscar chats, comandos, configuración..."
+                placeholder={t('cpSearchPlaceholder')}
                 className="flex-1 bg-transparent outline-none text-base font-medium text-[var(--text-primary)] placeholder-[var(--text-muted)]"
               />
               <kbd className="palette-kbd">ESC</kbd>
@@ -516,7 +517,7 @@ const CommandPaletteDialog: React.FC<CommandPaletteDialogProps> = ({
                       }`}
                     >
                       <Clock className="w-3 h-3" />
-                      Recientes
+                      {t('asRecent')}
                     </div>
                     <button
                       type="button"
@@ -527,7 +528,7 @@ const CommandPaletteDialog: React.FC<CommandPaletteDialogProps> = ({
                           : 'text-gray-400 hover:text-gray-600'
                       }`}
                     >
-                      Limpiar
+                      {t('clear')}
                     </button>
                   </div>
                   <div className="space-y-1">
@@ -562,16 +563,16 @@ const CommandPaletteDialog: React.FC<CommandPaletteDialogProps> = ({
                     }`}
                   />
                   <p className={`font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                    No se encontraron resultados
+                    {t('cpNoResults')}
                   </p>
                   <p className={`text-sm mt-1 ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                    Intenta con otros términos de búsqueda
+                    {t('cpNoResultsHint')}
                   </p>
                 </div>
               ) : (
                 <>
                   <CommandGroup
-                    title="Acciones"
+                    title={t('cpSectionActions')}
                     commands={groupedCommands.action}
                     icon={Zap}
                     selectedIndex={selectedIndex}
@@ -579,7 +580,7 @@ const CommandPaletteDialog: React.FC<CommandPaletteDialogProps> = ({
                     onSelectedIndexChange={handleSelectedIndexChange}
                   />
                   <CommandGroup
-                    title="Navegación"
+                    title={t('cpSectionNavigation')}
                     commands={groupedCommands.navigation}
                     icon={ArrowRight}
                     selectedIndex={selectedIndex}
@@ -587,7 +588,7 @@ const CommandPaletteDialog: React.FC<CommandPaletteDialogProps> = ({
                     onSelectedIndexChange={handleSelectedIndexChange}
                   />
                   <CommandGroup
-                    title="Configuración"
+                    title={t('cpSectionSettings')}
                     commands={groupedCommands.setting}
                     icon={Settings}
                     selectedIndex={selectedIndex}
@@ -595,7 +596,7 @@ const CommandPaletteDialog: React.FC<CommandPaletteDialogProps> = ({
                     onSelectedIndexChange={handleSelectedIndexChange}
                   />
                   <CommandGroup
-                    title="Chats"
+                    title={t('cpSectionChats')}
                     commands={groupedCommands.chat}
                     icon={MessageSquare}
                     selectedIndex={selectedIndex}
@@ -612,15 +613,16 @@ const CommandPaletteDialog: React.FC<CommandPaletteDialogProps> = ({
                 <span className="flex items-center gap-1">
                   <kbd className="palette-kbd">↑</kbd>
                   <kbd className="palette-kbd">↓</kbd>
-                  <span>navegar</span>
+                  <span>{t('cpNavigate')}</span>
                 </span>
                 <span className="flex items-center gap-1">
                   <kbd className="palette-kbd">↵</kbd>
-                  <span>seleccionar</span>
+                  <span>{t('cpSelect')}</span>
                 </span>
               </div>
               <div className="text-xs text-[var(--text-muted)]">
-                {filteredCommands.length} resultado{filteredCommands.length !== 1 ? 's' : ''}
+                {filteredCommands.length}{' '}
+                {filteredCommands.length === 1 ? t('resultSingular') : t('resultsPlural')}
               </div>
             </div>
           </div>

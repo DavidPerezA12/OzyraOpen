@@ -1,8 +1,10 @@
 import { useCallback, useRef, type Dispatch, type SetStateAction } from 'react';
 import toast from 'react-hot-toast';
+import { t } from '../i18n';
 import { chatService } from '../services/chatService';
 import type { Chat } from '../types';
 import { updateChatCustomizationPrompt } from '../utils/db';
+import { logger } from '../utils/logger';
 
 interface UseChatCustomizationParams {
   readonly currentChat: Chat | null;
@@ -77,8 +79,8 @@ export function useChatCustomization({
           updatedChat.customizationPrompt ?? null
         );
       } catch (error) {
-        console.error('Error al guardar personalización local:', error);
-        toast.error('No se pudo guardar la personalización');
+        logger.error('Error al guardar personalización local:', error);
+        toast.error(t('customizationSaveError'));
         return;
       }
     }
@@ -121,11 +123,11 @@ export function useChatCustomization({
       if (improved) {
         setCurrentChatCustomizationInput(cleanImprovedPrompt(improved));
       } else {
-        toast.error('No se pudo mejorar la personalización');
+        toast.error(t('customizationImproveError'));
       }
     } catch (error) {
-      console.error('Error mejorando personalización:', error);
-      toast.error('Error al mejorar con IA');
+      logger.error('Error mejorando personalización:', error);
+      toast.error(t('customizationImproveAiError'));
     } finally {
       isImprovingRef.current = false;
       setIsImprovingChatCustomization(false);

@@ -1,6 +1,12 @@
 import { Bot, Check, ChevronDown, Search, Settings, X, Zap } from 'lucide-react';
-import { useEffect, useMemo, useRef, type RefObject } from 'react';
-import { availableModels, getModelInfo, getModelUsageScores } from '../../../config/models';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import {
+  availableModels,
+  getModelInfo,
+  getModelUsageScores,
+  MODEL_CATALOG_UPDATED_EVENT,
+} from '../../../config/models';
+import { t } from '../../../i18n';
 
 interface ModelSelectorInlineProps {
   readonly selectedModel: string;
@@ -36,8 +42,26 @@ export const ModelSelectorInline = ({
 }: ModelSelectorInlineProps) => {
   const selectedModelInfo = getModelInfo(selectedModel);
   const modelSearchInputRef = useRef<HTMLInputElement>(null);
-  const modelUsageScores = getModelUsageScores();
-  const enabledModelsCount = availableModels.filter((m) => enabledModelIds.includes(m.id)).length;
+  // Leer usage scores solo al abrir el dropdown o cuando cambia el catálogo:
+  // leer localStorage + crear un Map en cada render invalidaba el useMemo de
+  // abajo sobre cientos de modelos.
+  const [usageScoresVersion, setUsageScoresVersion] = useState(0);
+  useEffect(() => {
+    const handleCatalogUpdate = () => setUsageScoresVersion((version) => version + 1);
+    window.addEventListener(MODEL_CATALOG_UPDATED_EVENT, handleCatalogUpdate);
+    return () => window.removeEventListener(MODEL_CATALOG_UPDATED_EVENT, handleCatalogUpdate);
+  }, []);
+  const modelUsageScores = useMemo(
+    () => getModelUsageScores(),
+    // Intencionado: isModelDropdownOpen/usageScoresVersion son claves de
+    // invalidación de caché, no valores reactivos leídos por el cálculo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isModelDropdownOpen, usageScoresVersion]
+  );
+  const enabledModelsCount = useMemo(
+    () => availableModels.filter((m) => enabledModelIds.includes(m.id)).length,
+    [enabledModelIds]
+  );
   const filteredModels = useMemo(
     () =>
       availableModels
@@ -159,8 +183,9 @@ export const ModelSelectorInline = ({
           setIsModelDropdownOpen(!isModelDropdownOpen);
         }}
         className="composer-tool-btn"
-        aria-haspopup="true"
+        aria-haspopup="menu"
         aria-expanded={isModelDropdownOpen}
+        aria-controls="model-selector-menu"
       >
         <div className="flex items-center gap-2">
           {selectedModelLabel}
@@ -172,14 +197,17 @@ export const ModelSelectorInline = ({
 
       {isModelDropdownOpen && (
         <div
+          id="model-selector-menu"
           className="composer-dropdown-menu focus:outline-none"
           role="menu"
           aria-orientation="vertical"
-          aria-labelledby="options-menu"
+          aria-label={t('modelsDropdownTitle')}
         >
           <div className="p-2 flex-shrink-0 border-b border-[var(--border-primary)] relative z-10 bg-[var(--bg-elevated)]">
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xs font-medium text-[var(--text-primary)]">Modelos</h3>
+              <p className="text-xs font-medium text-[var(--text-primary)]">
+                {t('modelsDropdownTitle')}
+              </p>
               <div className="px-2 py-0.5 rounded-full text-xs font-medium bg-[var(--color-primary-soft)] text-[var(--color-primary)]">
                 {enabledModelsCount}
               </div>
@@ -188,8 +216,8 @@ export const ModelSelectorInline = ({
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-3 h-3 text-[var(--text-secondary)]" />
               <input
                 type="text"
-                aria-label="Buscar modelos"
-                placeholder="Buscar..."
+                aria-label={t('searchModels')}
+                placeholder={t('search')}
                 value={modelSearchQuery}
                 onChange={(e) => setModelSearchQuery(e.target.value)}
                 onKeyDown={(e) => {
@@ -209,7 +237,7 @@ export const ModelSelectorInline = ({
                   type="button"
                   onClick={() => setModelSearchQuery('')}
                   className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1.5 hover:bg-[var(--bg-surface)] text-[var(--text-secondary)]"
-                  aria-label="Limpiar búsqueda"
+                  aria-label={t('clearSearch')}
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -223,7 +251,7 @@ export const ModelSelectorInline = ({
           >
             {filteredModels.length === 0 ? (
               <div className="px-3 py-4 text-xs text-[var(--text-muted)] text-center">
-                No se encontraron modelos
+                {t('noModelsFound')}
               </div>
             ) : (
               filteredModels.map((model) => {
@@ -241,7 +269,8 @@ export const ModelSelectorInline = ({
                         ? 'bg-[var(--color-primary-soft)] text-[var(--text-primary)]'
                         : 'text-[var(--text-secondary)] hover:bg-[var(--color-primary-soft)] hover:text-[var(--text-primary)]'
                     }`}
-                    role="menuitem"
+                    role="menuitemradio"
+                    aria-checked={isSelected}
                   >
                     <div
                       className={`flex-shrink-0 p-2 rounded-[var(--radius-sm)] border border-[var(--border-primary)] transition-colors ${
@@ -307,7 +336,7 @@ export const ModelSelectorInline = ({
               className="atelier-btn-secondary w-full justify-center text-xs"
             >
               <Settings className="w-3 h-3" />
-              <span>Configurar</span>
+              <span>{t('configureAction')}</span>
               <div className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-[var(--color-primary-soft)] text-[var(--color-primary)]">
                 {enabledModelsCount}
               </div>

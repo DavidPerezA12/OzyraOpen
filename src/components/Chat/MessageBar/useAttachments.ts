@@ -1,9 +1,38 @@
 import { useEffect, useRef, type ChangeEvent, type Dispatch, type SetStateAction } from 'react';
 import { toast } from 'react-hot-toast';
+import { t } from '../../../i18n';
 import type { UploadedImage } from './types';
+import { logger } from '../../../utils/logger';
 
 const MAX_IMAGES = 4;
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+
+const getFileExtension = (name: string): string => {
+  const dot = name.lastIndexOf('.');
+  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+};
+
+const isAllowedImage = (file: File): boolean => {
+  // file.type es controlable por el cliente: exigir MIME + extensión coherentes.
+  if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+    return false;
+  }
+  const ext = getFileExtension(file.name);
+  if (file.type === 'image/png' && ext !== 'png') {
+    return ext === '';
+  }
+  if (file.type === 'image/jpeg' && !['jpg', 'jpeg'].includes(ext)) {
+    return ext === '';
+  }
+  if (file.type === 'image/webp' && ext !== 'webp') {
+    return ext === '';
+  }
+  if (file.type === 'image/gif' && ext !== 'gif') {
+    return ext === '';
+  }
+  return true;
+};
 
 interface UseAttachmentsOptions {
   readonly uploadedImages: readonly UploadedImage[];
@@ -20,7 +49,7 @@ const revokeBlobUrl = (url: string): void => {
   try {
     URL.revokeObjectURL(url);
   } catch (error) {
-    console.warn('Error liberando URL de imagen', error);
+    logger.warn('Error liberando URL de imagen', { detail: error });
   }
 };
 
@@ -32,12 +61,13 @@ export const useAttachments = ({ uploadedImages, setUploadedImages }: UseAttachm
   const trackedBlobUrls = trackedBlobUrlsRef.current;
 
   const addFileAsImage = (file: File) => {
-    if (!file.type.startsWith('image/')) {
+    if (!isAllowedImage(file)) {
+      toast.error(t('imageReadError'));
       return;
     }
 
     if (file.size > MAX_IMAGE_SIZE_BYTES) {
-      toast.error('La imagen es demasiado grande. Tamaño máximo: 5MB');
+      toast.error(t('imageTooLarge', { maxSize: MAX_IMAGE_SIZE_BYTES / (1024 * 1024) }));
       return;
     }
 
@@ -49,7 +79,7 @@ export const useAttachments = ({ uploadedImages, setUploadedImages }: UseAttachm
         setUploadedImages((currentImages) => {
           if (currentImages.length >= MAX_IMAGES) {
             revokeBlobUrl(imageUrl);
-            toast.error(`Máximo ${MAX_IMAGES} imágenes por mensaje`);
+            toast.error(t('maxImagesPerMessage', { max: MAX_IMAGES }));
             return currentImages;
           }
 
@@ -66,7 +96,7 @@ export const useAttachments = ({ uploadedImages, setUploadedImages }: UseAttachm
     };
     reader.onerror = () => {
       revokeBlobUrl(imageUrl);
-      toast.error('No se pudo leer la imagen adjunta');
+      toast.error(t('imageReadError'));
     };
     reader.readAsDataURL(file);
   };
@@ -79,7 +109,9 @@ export const useAttachments = ({ uploadedImages, setUploadedImages }: UseAttachm
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      addFileAsImage(file);
+      if (file) {
+        addFileAsImage(file);
+      }
     }
 
     e.target.value = '';

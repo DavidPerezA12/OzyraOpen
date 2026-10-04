@@ -1,4 +1,3 @@
-import { SiOpenai } from 'react-icons/si';
 import type { ProviderModelList } from './types';
 
 // OpenRouter implementation - Only verified models
@@ -6,7 +5,7 @@ export const openAIModels: ProviderModelList = [
   {
     id: 'openai/gpt-5-chat',
     name: 'GPT-5 Chat',
-    icon: SiOpenai,
+    icon: 'openai',
     provider: 'openrouter',
     displayProviderName: 'OpenAI',
     isReasoning: false,
@@ -21,7 +20,7 @@ export const openAIModels: ProviderModelList = [
   {
     id: 'openai/gpt-5',
     name: 'GPT-5 Reasoning',
-    icon: SiOpenai,
+    icon: 'openai',
     provider: 'openrouter',
     displayProviderName: 'OpenAI',
     isReasoning: true,

@@ -11,7 +11,12 @@ import {
 } from 'lucide-react';
 import React, { useEffect, useReducer, useRef } from 'react';
 import toast from 'react-hot-toast';
-import { languageOptions, type Language, type TranslationKey } from '../../../i18n';
+import {
+  languageOptions,
+  type Language,
+  type TranslationKey,
+  type TranslationParams,
+} from '../../../i18n';
 import {
   getStoredOpenRouterApiKey,
   saveOpenRouterApiKey,
@@ -23,13 +28,14 @@ import {
   saveLocalSyncDirectoryHandle,
   writeLocalFolderSnapshot,
 } from '../../../utils/localFolderSync';
+import { logger } from '../../../utils/logger';
 
 interface LocalProfileSectionProps {
   readonly isDarkMode: boolean;
   readonly userName: string;
   readonly language: Language;
   readonly setLanguage: (language: Language) => void;
-  readonly t: (key: TranslationKey) => string;
+  readonly t: (key: TranslationKey, params?: TranslationParams) => string;
 }
 
 interface LocalProfileState {
@@ -81,7 +87,7 @@ const LocalProfileSection: React.FC<LocalProfileSectionProps> = ({ language, set
     const trimmed = apiKey.trim();
     saveOpenRouterApiKey(trimmed);
     updateLocalProfileState({ apiKey: trimmed, savedApiKey: trimmed });
-    toast.success(trimmed ? 'Clave de OpenRouter guardada' : 'Clave de OpenRouter eliminada');
+    toast.success(trimmed ? t('keySaved') : t('keyRemoved'));
   };
 
   useEffect(() => {
@@ -106,7 +112,7 @@ const LocalProfileSection: React.FC<LocalProfileSectionProps> = ({ language, set
         }
       })
       .catch((error) => {
-        console.warn('[LocalFolderSync] No se pudo restaurar la carpeta:', error);
+        logger.warn('[LocalFolderSync] No se pudo restaurar la carpeta:', { detail: error });
       });
     return () => {
       isMounted = false;
@@ -120,7 +126,7 @@ const LocalProfileSection: React.FC<LocalProfileSectionProps> = ({ language, set
       updateLocalProfileState({ lastFolderSync: result.exportedAt });
       toast.success(`${t('folderSaved')} ${result.fileName}`);
     } catch (error) {
-      console.error('[LocalFolderSync] Error al guardar datos:', error);
+      logger.error('[LocalFolderSync] Error al guardar datos:', error);
       toast.error(error instanceof Error ? error.message : t('folderSaveError'));
     } finally {
       updateLocalProfileState({ isSyncingFolder: false });
@@ -202,7 +208,7 @@ const LocalProfileSection: React.FC<LocalProfileSectionProps> = ({ language, set
       if (error instanceof DOMException && error.name === 'AbortError') {
         return;
       }
-      console.error('[LocalFolderSync] Error al elegir carpeta:', error);
+      logger.error('[LocalFolderSync] Error al elegir carpeta:', error);
       toast.error(error instanceof Error ? error.message : t('folderPickError'));
     }
   };
@@ -218,8 +224,8 @@ const LocalProfileSection: React.FC<LocalProfileSectionProps> = ({ language, set
   return (
     <div className="cfg-page">
       <div className="cfg-page-header">
-        <h2 className="cfg-page-title">Perfil local</h2>
-        <p className="cfg-page-desc">Idioma y almacenamiento local.</p>
+        <h2 className="cfg-page-title">{t('localProfileTitle')}</h2>
+        <p className="cfg-page-desc">{t('localProfileDesc')}</p>
       </div>
 
       {/* Idioma */}
@@ -254,6 +260,8 @@ const LocalProfileSection: React.FC<LocalProfileSectionProps> = ({ language, set
               onClick={() => updateLocalProfileState({ isLangDropdownOpen: !isLangDropdownOpen })}
               className="cfg-btn"
               style={{ width: '100%', justifyContent: 'space-between' }}
+              aria-haspopup="listbox"
+              aria-expanded={isLangDropdownOpen}
             >
               <span>
                 {languageOptions.find((opt) => opt.code === language)?.nativeLabel || language}
@@ -268,13 +276,19 @@ const LocalProfileSection: React.FC<LocalProfileSectionProps> = ({ language, set
             </button>
 
             {isLangDropdownOpen && (
-              <div className="local-profile-language-menu animate-slide-down">
+              <div
+                className="local-profile-language-menu animate-slide-down"
+                role="listbox"
+                aria-label={t('language')}
+              >
                 {languageOptions.map((option) => {
                   const isSelected = option.code === language;
                   return (
                     <button
                       key={option.code}
                       type="button"
+                      role="option"
+                      aria-selected={isSelected}
                       onClick={() => {
                         setLanguage(option.code);
                         updateLocalProfileState({ isLangDropdownOpen: false });
@@ -306,8 +320,7 @@ const LocalProfileSection: React.FC<LocalProfileSectionProps> = ({ language, set
               API key
             </label>
             <span className="cfg-row-hint">
-              Se guarda en este navegador y es la clave que se usa para chatear. Consíguela en
-              openrouter.ai/keys.
+              {t('localStorageKeyHint')} {t('localStorageKeySuffix')}
             </span>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -381,7 +394,7 @@ const LocalProfileSection: React.FC<LocalProfileSectionProps> = ({ language, set
               {!folderSyncSupported
                 ? t('folderCopyUnsupported')
                 : directoryHandle
-                  ? `${t('folderCopyActive')}${lastFolderSync ? ` · ${new Date(lastFolderSync).toLocaleString()}` : ''}`
+                  ? `${t('folderCopyActive')}${lastFolderSync ? ` · ${new Date(lastFolderSync).toLocaleString(language)}` : ''}`
                   : t('folderCopyChoose')}
             </span>
           </div>

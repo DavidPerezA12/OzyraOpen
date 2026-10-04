@@ -1,4 +1,5 @@
 import toast, { ToastBar, Toaster } from 'react-hot-toast';
+import { t } from '../../i18n';
 
 interface AppToasterProps {
   readonly isDarkMode: boolean;
@@ -49,7 +50,7 @@ export function AppToaster({ isDarkMode }: AppToasterProps) {
                     className={`ml-2 text-xs opacity-70 hover:opacity-100 ${
                       isDarkMode ? 'text-slate-300' : 'text-slate-600'
                     }`}
-                    aria-label="Cerrar notificación"
+                    aria-label={t('closeNotification')}
                   >
                     ×
                   </button>

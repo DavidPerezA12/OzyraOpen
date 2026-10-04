@@ -1,16 +1,17 @@
 import type { SettingsTab } from './types';
+import { t, type TranslationKey } from '../../i18n';
 
-const PRIMARY_TABS: { id: SettingsTab; label: string }[] = [
-  { id: 'local_profile', label: 'Perfil' },
-  { id: 'customization', label: 'Personalización' },
-  { id: 'search', label: 'Búsqueda' },
-  { id: 'history', label: 'Historial' },
-  { id: 'models', label: 'Modelos' },
+const PRIMARY_TABS: { id: SettingsTab; labelKey: TranslationKey }[] = [
+  { id: 'local_profile', labelKey: 'navProfile' },
+  { id: 'customization', labelKey: 'tabCustomization' },
+  { id: 'search', labelKey: 'navSearch' },
+  { id: 'history', labelKey: 'tabHistory' },
+  { id: 'models', labelKey: 'tabModels' },
 ];
 
-const SECONDARY_TABS: { id: SettingsTab; label: string }[] = [
-  { id: 'shortcuts', label: 'Atajos' },
-  { id: 'about', label: 'Proyecto' },
+const SECONDARY_TABS: { id: SettingsTab; labelKey: TranslationKey }[] = [
+  { id: 'shortcuts', labelKey: 'navShortcuts' },
+  { id: 'about', labelKey: 'navAbout' },
 ];
 
 interface SettingsNavProps {
@@ -21,7 +22,7 @@ interface SettingsNavProps {
 export default function SettingsNav({ activeTab, onTabChange }: SettingsNavProps) {
   return (
     <nav className="cfg-nav">
-      <span className="cfg-nav-label">Ajustes</span>
+      <span className="cfg-nav-label">{t('sidebarSettings')}</span>
       {PRIMARY_TABS.map((tab) => (
         <button
           key={tab.id}
@@ -29,7 +30,7 @@ export default function SettingsNav({ activeTab, onTabChange }: SettingsNavProps
           onClick={() => onTabChange(tab.id)}
           className={`cfg-nav-item ${activeTab === tab.id ? 'cfg-nav-item--active' : ''}`}
         >
-          {tab.label}
+          {t(tab.labelKey)}
         </button>
       ))}
 
@@ -44,7 +45,7 @@ export default function SettingsNav({ activeTab, onTabChange }: SettingsNavProps
             activeTab === tab.id ? 'cfg-nav-item--active' : ''
           }`}
         >
-          {tab.label}
+          {t(tab.labelKey)}
         </button>
       ))}
     </nav>

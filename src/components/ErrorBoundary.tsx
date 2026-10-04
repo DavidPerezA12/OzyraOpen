@@ -5,14 +5,42 @@
  * para mostrar errores no controlados en la aplicación.
  */
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { t } from '../i18n';
+import { logger } from '../utils/logger';
 
 export class ErrorBoundary extends Component<
-  { children: ReactNode },
+  {
+    children: ReactNode;
+    /**
+     * Fallback propio de la zona (chat, composer, sidebar...). Si se omite,
+     * se muestra la pantalla completa de error con recarga.
+     */
+    fallback?: ReactNode;
+    /**
+     * Fallback con reintento: recibe `retry` para remontar solo el subárbol
+     * caído sin recargar la página (el estado vive fuera del boundary).
+     */
+    renderFallback?: (retry: () => void) => ReactNode;
+    /**
+     * Claves que, al cambiar, reintentan la zona sin recargar (p. ej. el id
+     * del chat actual). El estado de la app vive fuera del boundary, así que
+     * los borradores y el historial se conservan.
+     */
+    resetKeys?: readonly unknown[];
+  },
   { hasError: boolean; error: Error | null }
 > {
-  constructor(props: { children: ReactNode }) {
+  private previousResetKeys: readonly unknown[];
+
+  constructor(props: {
+    children: ReactNode;
+    fallback?: ReactNode;
+    renderFallback?: (retry: () => void) => ReactNode;
+    resetKeys?: readonly unknown[];
+  }) {
     super(props);
     this.state = { hasError: false, error: null };
+    this.previousResetKeys = props.resetKeys ?? [];
   }
 
   static getDerivedStateFromError(error: Error) {
@@ -20,19 +48,41 @@ export class ErrorBoundary extends Component<
   }
 
   override componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('Application Error:', error);
-    console.error('Component Stack:', errorInfo.componentStack);
+    logger.error('Application Error:', error);
+    logger.error('Component Stack:', errorInfo.componentStack);
 
     // Los errores se registran localmente en consola; no hay servicio remoto de monitorización.
   }
 
+  override componentDidUpdate() {
+    const resetKeys = this.props.resetKeys ?? [];
+    const changed =
+      resetKeys.length !== this.previousResetKeys.length ||
+      resetKeys.some((key, index) => !Object.is(key, this.previousResetKeys[index]));
+    this.previousResetKeys = resetKeys;
+    if (changed && this.state.hasError) {
+      this.setState({ hasError: false, error: null });
+    }
+  }
+
   handleReset = () => {
+    // Con fallback de zona basta con reintentar el subárbol (sin reload).
+    if (this.props.fallback) {
+      this.setState({ hasError: false, error: null });
+      return;
+    }
     this.setState({ hasError: false, error: null });
     window.location.reload();
   };
 
   override render() {
     if (this.state.hasError && this.state.error) {
+      if (this.props.renderFallback) {
+        return <>{this.props.renderFallback(this.handleReset)}</>;
+      }
+      if (this.props.fallback) {
+        return <>{this.props.fallback}</>;
+      }
       return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
           <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
@@ -53,17 +103,17 @@ export class ErrorBoundary extends Component<
             </div>
 
             <h1 className="text-xl font-semibold text-gray-900 dark:text-white text-center mb-2">
-              Algo salió mal
+              {t('errorBoundaryTitle')}
             </h1>
 
             <p className="text-gray-600 dark:text-gray-300 text-center mb-4">
-              Ha ocurrido un error inesperado. Por favor, intenta recargar la página.
+              {t('errorBoundaryBody')}
             </p>
 
             {import.meta.env.DEV && (
               <details className="mb-4">
                 <summary className="cursor-pointer text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
-                  Detalles del error
+                  {t('errorBoundaryDetails')}
                 </summary>
                 <pre className="mt-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/10 p-2 rounded overflow-auto">
                   {this.state.error.message}
@@ -76,7 +126,7 @@ export class ErrorBoundary extends Component<
               onClick={this.handleReset}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
             >
-              Reintentar
+              {t('errorBoundaryRetry')}
             </button>
           </div>
         </div>

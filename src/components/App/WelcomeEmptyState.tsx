@@ -1,54 +1,44 @@
 import { ArrowUpRight, Code2, Compass, GraduationCap, Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { WelcomeCategory } from '../../hooks/useAppUiState';
+import { t, type TranslationKey } from '../../i18n';
 
 interface WelcomeCategoryItem {
-  readonly label: WelcomeCategory;
+  readonly id: WelcomeCategory;
   readonly icon: ReactNode;
-  readonly hint: string;
-  readonly suggestions: readonly string[];
+  readonly labelKey: TranslationKey;
+  readonly hintKey: TranslationKey;
+  readonly suggestionKeys: readonly TranslationKey[];
 }
 
 const WELCOME_CATEGORIES: readonly WelcomeCategoryItem[] = [
   {
-    label: 'Crear',
+    id: 'create',
     icon: <Sparkles size={14} />,
-    hint: 'Ideas, textos y borradores',
-    suggestions: [
-      'Escribe un relato corto sobre una ciudad que no duerme',
-      'Dame diez nombres para una marca de café de especialidad',
-      'Redacta un correo profesional para pedir un aumento',
-    ],
+    labelKey: 'welcomeCatCreate',
+    hintKey: 'welcomeHintCreate',
+    suggestionKeys: ['welcomeSugCreate1', 'welcomeSugCreate2', 'welcomeSugCreate3'],
   },
   {
-    label: 'Explorar',
+    id: 'explore',
     icon: <Compass size={14} />,
-    hint: 'Entiende cualquier tema a fondo',
-    suggestions: [
-      '¿Cómo funciona una IA por dentro?',
-      'Explícame los agujeros negros como si tuviera 10 años',
-      'Ayúdame a planificar una escapada de fin de semana',
-    ],
+    labelKey: 'welcomeCatExplore',
+    hintKey: 'welcomeHintExplore',
+    suggestionKeys: ['welcomeSugExplore1', 'welcomeSugExplore2', 'welcomeSugExplore3'],
   },
   {
-    label: 'Programar',
+    id: 'code',
     icon: <Code2 size={14} />,
-    hint: 'Código, debugging y arquitectura',
-    suggestions: [
-      'Revisa este código y sugiere mejoras',
-      'Explícame la diferencia entre async y await en JavaScript',
-      'Diseña el esquema de una base de datos para un blog',
-    ],
+    labelKey: 'welcomeCatCode',
+    hintKey: 'welcomeHintCode',
+    suggestionKeys: ['welcomeSugCode1', 'welcomeSugCode2', 'welcomeSugCode3'],
   },
   {
-    label: 'Aprender',
+    id: 'learn',
     icon: <GraduationCap size={14} />,
-    hint: 'Estudia y practica a tu ritmo',
-    suggestions: [
-      'Crea un plan de estudio de 30 días para aprender SQL',
-      'Hazme un test rápido sobre la Revolución Francesa',
-      'Resume el libro "Hábitos atómicos" en cinco puntos',
-    ],
+    labelKey: 'welcomeCatLearn',
+    hintKey: 'welcomeHintLearn',
+    suggestionKeys: ['welcomeSugLearn1', 'welcomeSugLearn2', 'welcomeSugLearn3'],
   },
 ];
 
@@ -68,8 +58,13 @@ export function WelcomeEmptyState({
   onSuggestionSelect,
 }: WelcomeEmptyStateProps) {
   const activeWelcomeCategory =
-    WELCOME_CATEGORIES.find((category) => category.label === welcomeCategory) ??
-    WELCOME_CATEGORIES[1];
+    WELCOME_CATEGORIES.find((category) => category.id === welcomeCategory) ??
+    WELCOME_CATEGORIES[1] ??
+    WELCOME_CATEGORIES[0];
+
+  if (!activeWelcomeCategory) {
+    return null;
+  }
 
   return (
     <div className="h-full flex flex-col items-center justify-center px-4 pb-32">
@@ -78,48 +73,49 @@ export function WelcomeEmptyState({
           <span className="welcome-eyebrow">Ozyra Open · local-first</span>
         )}
 
-        <h2 className="welcome-heading">
+        <h1 className="welcome-heading">
           {isLocalProfileLoading ? (
-            'Cargando…'
+            t('welcomeLoading')
           ) : (
             <>
-              ¿En qué te ayudo{userName ? `, ${userName}` : ''}
+              {t('welcomeHeading')}
+              {userName ? `, ${userName}` : ''}
               <span className="welcome-heading-accent">?</span>
             </>
           )}
-        </h2>
+        </h1>
 
         {!isLocalProfileLoading && (
           <>
             <div className="welcome-pills-row">
               {WELCOME_CATEGORIES.map((item) => (
                 <button
-                  key={item.label}
+                  key={item.id}
                   type="button"
                   className="welcome-pill-btn"
-                  data-active={item.label === welcomeCategory}
-                  onClick={() => onWelcomeCategoryChange(item.label)}
+                  data-active={item.id === welcomeCategory}
+                  onClick={() => onWelcomeCategoryChange(item.id)}
                 >
                   <span className="welcome-pill-icon">{item.icon}</span>
-                  <span className="welcome-pill-label">{item.label}</span>
+                  <span className="welcome-pill-label">{t(item.labelKey)}</span>
                 </button>
               ))}
             </div>
 
-            <p className="welcome-hint">{activeWelcomeCategory.hint}</p>
+            <p className="welcome-hint">{t(activeWelcomeCategory.hintKey)}</p>
 
-            <div className="welcome-suggestions-list-styled" key={activeWelcomeCategory.label}>
-              {activeWelcomeCategory.suggestions.map((suggestion, index) => (
+            <div className="welcome-suggestions-list-styled" key={activeWelcomeCategory.id}>
+              {activeWelcomeCategory.suggestionKeys.map((suggestionKey, index) => (
                 <button
-                  key={suggestion}
+                  key={suggestionKey}
                   type="button"
                   className="welcome-suggestion-row"
-                  onClick={() => onSuggestionSelect(suggestion)}
+                  onClick={() => onSuggestionSelect(t(suggestionKey))}
                 >
                   <span className="welcome-suggestion-index">
                     {String(index + 1).padStart(2, '0')}
                   </span>
-                  <span className="welcome-suggestion-text">{suggestion}</span>
+                  <span className="welcome-suggestion-text">{t(suggestionKey)}</span>
                   <ArrowUpRight className="welcome-suggestion-arrow" size={16} />
                 </button>
               ))}

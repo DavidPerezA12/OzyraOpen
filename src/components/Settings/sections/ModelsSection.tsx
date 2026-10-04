@@ -34,7 +34,8 @@ import {
   type ModelCatalogMeta,
 } from '../../../config/models';
 import { fetchOpenRouterModels } from '../../../services/openrouter/client';
-import type { TranslationKey } from '../../../i18n';
+import { logger } from '../../../utils/logger';
+import type { TranslationKey, TranslationParams } from '../../../i18n';
 
 type CapabilityFiltersState = {
   readonly fast: boolean;
@@ -57,17 +58,21 @@ interface ModelsSectionProps {
   readonly setCapabilityFilters: (v: CapabilityFiltersState) => void;
   readonly selectedProviders: string[];
   readonly setSelectedProviders: (v: string[]) => void;
-  readonly t: (key: TranslationKey) => string;
+  readonly t: (key: TranslationKey, params?: TranslationParams) => string;
 }
 
-const CAP_CONFIG: { key: CapabilityFilterKey; label: string; icon: React.ElementType }[] = [
-  { key: 'fast', label: 'Rápido', icon: Zap },
-  { key: 'vision', label: 'Visión', icon: Eye },
-  { key: 'reasoning', label: 'Razonamiento', icon: Brain },
-  { key: 'effortControl', label: 'Esfuerzo', icon: Gauge },
-  { key: 'toolCalling', label: 'Herramientas', icon: Wrench },
-  { key: 'imageGeneration', label: 'Imágenes', icon: ImageIcon },
-  { key: 'pdfComprehension', label: 'PDF', icon: FileText },
+const CAP_CONFIG: {
+  key: CapabilityFilterKey;
+  labelKey: TranslationKey | null;
+  icon: React.ElementType;
+}[] = [
+  { key: 'fast', labelKey: 'modelCapFast', icon: Zap },
+  { key: 'vision', labelKey: 'modelCapVision', icon: Eye },
+  { key: 'reasoning', labelKey: 'modelCapReasoning', icon: Brain },
+  { key: 'effortControl', labelKey: 'modelCapEffort', icon: Gauge },
+  { key: 'toolCalling', labelKey: 'modelCapTools', icon: Wrench },
+  { key: 'imageGeneration', labelKey: 'modelCapImages', icon: ImageIcon },
+  { key: 'pdfComprehension', labelKey: null, icon: FileText },
 ];
 
 const TOP_PROVIDERS = ['OpenAI', 'Anthropic', 'Google', 'Meta', 'DeepSeek', 'Mistral', 'GLM'];
@@ -119,7 +124,7 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
       updateAvailableModels(mapped);
       toast.success(t('syncSuccess'), { id: tid });
     } catch (e) {
-      console.error(e);
+      logger.error('Error al sincronizar modelos', e);
       toast.error(t('syncError'), { id: tid });
     } finally {
       setIsSyncing(false);
@@ -286,7 +291,7 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
             size={13}
             style={isSyncing ? { animation: 'mli-spin 1s linear infinite' } : undefined}
           />
-          {isSyncing ? 'Sincronizando…' : t('syncModels')}
+          {isSyncing ? t('syncing') : t('syncModels')}
         </button>
       </div>
 
@@ -315,7 +320,7 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
                 aria-expanded={showAllProviders}
               >
                 {showAllProviders ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-                {showAllProviders ? 'Menos' : `+${otherP.length}`}
+                {showAllProviders ? t('modelsShowLess') : `+${otherP.length}`}
               </button>
             )}
           </div>
@@ -327,9 +332,9 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
           </div>
         )}
         <div className="mli-filter-row mli-filter-row--sep">
-          <span className="mli-filter-label">Capacidades</span>
+          <span className="mli-filter-label">{t('capabilities')}</span>
           <div className="mli-chips">
-            {CAP_CONFIG.map(({ key, label, icon: Icon }) => (
+            {CAP_CONFIG.map(({ key, labelKey, icon: Icon }) => (
               <button
                 type="button"
                 key={key}
@@ -338,7 +343,7 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
                 aria-pressed={capabilityFilters[key]}
               >
                 <Icon size={11} />
-                {label}
+                {labelKey ? t(labelKey) : 'PDF'}
               </button>
             ))}
           </div>
@@ -353,9 +358,9 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
             type="text"
             value={modelSearch}
             onChange={(e) => setModelSearch(e.target.value)}
-            placeholder="Buscar modelos…"
+            placeholder={t('searchModels')}
             className="mli-search-input"
-            aria-label="Buscar modelos"
+            aria-label={t('searchModels')}
           />
         </label>
         <div className="mli-bulk">
@@ -418,17 +423,19 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
                   <div className="mli-item-name-row">
                     <span className="mli-item-name">{model.name}</span>
                     <span className="mli-item-provider">{model.displayProviderName}</span>
-                    {model.isNew && <span className="mli-badge mli-badge--new">Nuevo</span>}
+                    {model.isNew && (
+                      <span className="mli-badge mli-badge--new">{t('modelBadgeNew')}</span>
+                    )}
                     {model.isRecommended && (
                       <span className="mli-badge mli-badge--rec">
                         <Award size={9} />
-                        Rec.
+                        {t('modelBadgeRecommended')}
                       </span>
                     )}
                     {(model.tier ?? 'standard') === 'premium' && (
                       <span className="mli-badge mli-badge--advanced">
                         <Sparkles size={9} />
-                        Avanzado
+                        {t('modelBadgeAdvanced')}
                       </span>
                     )}
                   </div>
@@ -442,15 +449,17 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
                       {ctx && <span className="mli-stat">{ctx} ctx</span>}
                       {model.pricing ? (
                         model.pricing.input === 0 && model.pricing.output === 0 ? (
-                          <span className="mli-stat mli-stat--free">Sin coste</span>
+                          <span className="mli-stat mli-stat--free">{t('modelFree')}</span>
                         ) : (
                           <span className="mli-stat">
-                            ${model.pricing.input.toFixed(2)} / ${model.pricing.output.toFixed(2)}{' '}
-                            por 1M
+                            {t('modelPricePerMillion', {
+                              input: `$${model.pricing.input.toFixed(2)}`,
+                              output: `$${model.pricing.output.toFixed(2)}`,
+                            })}
                           </span>
                         )
                       ) : (
-                        <span className="mli-stat">Precio no disponible</span>
+                        <span className="mli-stat">{t('modelPriceUnavailable')}</span>
                       )}
                     </div>
                     <div className="mli-item-caps">
@@ -502,10 +511,7 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
               </div>
 
               {/* Right: toggle */}
-              <label
-                className="mli-toggle"
-                aria-label={on ? 'Desactivar modelo' : 'Activar modelo'}
-              >
+              <label className="mli-toggle" aria-label={on ? t('disableModel') : t('enableModel')}>
                 <input
                   type="checkbox"
                   checked={on}

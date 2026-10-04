@@ -1,3 +1,4 @@
+import { t } from '../../../i18n';
 const getSiteUrl = (): string => {
   const configuredUrl = import.meta.env.VITE_SITE_URL?.trim();
   if (configuredUrl) {
@@ -15,7 +16,7 @@ const getSiteLabel = (url: string): string => {
   try {
     return new URL(url).hostname.replace(/^www\./, '');
   } catch {
-    return 'Abrir sitio';
+    return t('aboutOpenSite');
   }
 };
 
@@ -26,41 +27,37 @@ export default function AboutSection() {
   return (
     <div className="cfg-page">
       <div className="cfg-page-header">
-        <h2 className="cfg-page-title">Proyecto</h2>
-        <p className="cfg-page-desc">
-          Ozyra Open es un cliente de IA local. Tus datos permanecen en este navegador.
-        </p>
+        <h2 className="cfg-page-title">{t('navAbout')}</h2>
+        <p className="cfg-page-desc">{t('aboutDesc')}</p>
       </div>
 
       <div className="cfg-section">
         <div className="cfg-row cfg-row--border">
           <div className="cfg-row-info">
-            <span className="cfg-row-label">Versión</span>
+            <span className="cfg-row-label">{t('aboutVersion')}</span>
           </div>
           <span className="cfg-row-value">1.0.0</span>
         </div>
 
         <div className="cfg-row cfg-row--border">
           <div className="cfg-row-info">
-            <span className="cfg-row-label">Almacenamiento</span>
-            <span className="cfg-row-hint">Datos guardados en localStorage de este navegador.</span>
+            <span className="cfg-row-label">{t('aboutStorage')}</span>
+            <span className="cfg-row-hint">{t('aboutStorageHint')}</span>
           </div>
-          <span className="cfg-badge cfg-badge--accent">Local</span>
+          <span className="cfg-badge cfg-badge--accent">{t('aboutLocalBadge')}</span>
         </div>
 
         <div className="cfg-row cfg-row--border">
           <div className="cfg-row-info">
-            <span className="cfg-row-label">Infraestructura propia</span>
+            <span className="cfg-row-label">{t('aboutInfra')}</span>
           </div>
-          <span className="cfg-badge cfg-badge--neutral">No configurada</span>
+          <span className="cfg-badge cfg-badge--neutral">{t('aboutInfraBadge')}</span>
         </div>
 
         <div className="cfg-row cfg-row--border">
           <div className="cfg-row-info">
-            <span className="cfg-row-label">IA</span>
-            <span className="cfg-row-hint">
-              Peticiones directas a OpenRouter desde el navegador.
-            </span>
+            <span className="cfg-row-label">{t('aboutAi')}</span>
+            <span className="cfg-row-hint">{t('aboutAiHint')}</span>
           </div>
           <span className="cfg-row-value">OpenRouter</span>
         </div>
@@ -74,8 +71,8 @@ export default function AboutSection() {
 
         <div className="cfg-row cfg-row--border">
           <div className="cfg-row-info">
-            <span className="cfg-row-label">Dominio</span>
-            <span className="cfg-row-hint">Página pública de Ozyra Open.</span>
+            <span className="cfg-row-label">{t('aboutDomain')}</span>
+            <span className="cfg-row-hint">{t('aboutDomainHint')}</span>
           </div>
           <a href={siteUrl} target="_blank" rel="noopener noreferrer" className="cfg-link">
             {siteLabel}
@@ -94,8 +91,8 @@ export default function AboutSection() {
 
         <div className="cfg-row">
           <div className="cfg-row-info">
-            <span className="cfg-row-label">Repositorio</span>
-            <span className="cfg-row-hint">Código fuente, issues y contribuciones.</span>
+            <span className="cfg-row-label">{t('aboutRepo')}</span>
+            <span className="cfg-row-hint">{t('aboutRepoHint')}</span>
           </div>
           <a
             href="https://github.com/DavidPerezA12/OzyraOpen"

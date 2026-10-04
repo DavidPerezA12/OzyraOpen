@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { CommandPalette } from './CommandPalette';
+import { t } from '../../i18n';
 
 describe('CommandPalette', () => {
   it('filters and executes a matching command', () => {
@@ -11,10 +12,10 @@ describe('CommandPalette', () => {
       <CommandPalette isOpen onClose={onClose} onExecuteCommand={onExecuteCommand} chats={[]} />
     );
 
-    fireEvent.change(screen.getByLabelText('Buscar chats y comandos'), {
+    fireEvent.change(screen.getByLabelText(t('cpSearchLabel')), {
       target: { value: 'configuración' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /Abrir configuración/ }));
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(t('cpOpenSettings')) }));
 
     expect(onExecuteCommand).toHaveBeenCalledWith('settings');
     expect(onClose).toHaveBeenCalledOnce();
@@ -23,7 +24,7 @@ describe('CommandPalette', () => {
   it('does not show disabled search commands', () => {
     render(<CommandPalette isOpen onClose={vi.fn()} onExecuteCommand={vi.fn()} chats={[]} />);
 
-    fireEvent.change(screen.getByLabelText('Buscar chats y comandos'), {
+    fireEvent.change(screen.getByLabelText(t('cpSearchLabel')), {
       target: { value: 'búsqueda web' },
     });
 

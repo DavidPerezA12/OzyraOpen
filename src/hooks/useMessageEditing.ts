@@ -1,7 +1,9 @@
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import toast from 'react-hot-toast';
+import { t } from '../i18n';
 import type { Chat, Message } from '../types';
 import { updateMessageContent } from '../utils/db';
+import { logger } from '../utils/logger';
 
 interface UseMessageEditingParams {
   readonly currentChat: Chat | null;
@@ -38,8 +40,8 @@ export function useMessageEditing({
         try {
           await updateMessageContent(messageId, editingContent);
         } catch (error) {
-          console.error('Error al guardar edición en historial local:', error);
-          toast.error('No se pudo guardar la edición en el historial local');
+          logger.error('Error al guardar edición en historial local:', error);
+          toast.error(t('editSaveError'));
           return;
         }
       }

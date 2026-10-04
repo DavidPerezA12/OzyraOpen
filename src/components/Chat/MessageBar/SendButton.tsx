@@ -1,6 +1,7 @@
 import { CustomSendIcon } from './CustomSendIcon';
 import { CustomSpinnerIcon } from './CustomSpinnerIcon';
 import { CustomStopIcon } from './CustomStopIcon';
+import { t } from '../../../i18n';
 
 interface SendButtonProps {
   readonly isLoading: boolean;
@@ -20,7 +21,7 @@ export const SendButton = ({ isLoading, canSubmit, cancelGeneration }: SendButto
     disabled={isLoading ? false : !canSubmit}
     className="composer-send-btn"
     aria-label={
-      isLoading ? (cancelGeneration ? 'Detener generación' : 'Generando...') : 'Enviar mensaje'
+      isLoading ? (cancelGeneration ? t('stopGeneration') : t('generating')) : t('sendMessageLabel')
     }
   >
     {isLoading ? cancelGeneration ? <CustomStopIcon /> : <CustomSpinnerIcon /> : <CustomSendIcon />}

@@ -1,5 +1,6 @@
 import type React from 'react';
 import { Paperclip } from 'lucide-react';
+import { t } from '../../../i18n';
 
 interface AttachmentButtonProps {
   readonly inputId: string;
@@ -21,8 +22,8 @@ export const AttachmentButton = ({ inputId, isLoading, onImageUpload }: Attachme
     <label
       htmlFor={inputId}
       className={`composer-icon-btn ${isLoading ? 'is-disabled' : ''}`}
-      title="Adjuntar imagen"
-      aria-label="Adjuntar imagen"
+      title={t('attachImage')}
+      aria-label={t('attachImage')}
     >
       <Paperclip size={15} />
     </label>

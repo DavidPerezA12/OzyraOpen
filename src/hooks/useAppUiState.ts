@@ -2,7 +2,7 @@ import { useCallback, useMemo, useReducer, type Dispatch, type SetStateAction } 
 import type { Language } from '../i18n';
 import type { UploadedImage } from '../types';
 
-export type WelcomeCategory = 'Crear' | 'Explorar' | 'Programar' | 'Aprender';
+export type WelcomeCategory = 'create' | 'explore' | 'code' | 'learn';
 
 interface AppUiState {
   sidebarOpen: boolean;

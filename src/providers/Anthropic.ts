@@ -1,4 +1,3 @@
-import { SiAnthropic } from 'react-icons/si';
 import type { ProviderModelList } from './types';
 
 // OpenRouter implementation - Only verified models
@@ -6,7 +5,7 @@ export const anthropicModels: ProviderModelList = [
   {
     id: 'anthropic/claude-sonnet-4.5',
     name: 'Claude Sonnet 4.5',
-    icon: SiAnthropic,
+    icon: 'anthropic',
     provider: 'openrouter',
     displayProviderName: 'Anthropic',
     isReasoning: false,
@@ -21,7 +20,7 @@ export const anthropicModels: ProviderModelList = [
   {
     id: 'anthropic/claude-sonnet-4.5-reasoning',
     name: 'Claude Sonnet 4.5 Reasoning',
-    icon: SiAnthropic,
+    icon: 'anthropic',
     provider: 'openrouter',
     displayProviderName: 'Anthropic',
     isReasoning: true,

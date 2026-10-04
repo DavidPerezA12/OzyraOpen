@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Zap, ChevronDown, Check, Globe } from 'lucide-react';
 import type { ReasoningLevel } from './types';
+import { t, type TranslationKey } from '../../../i18n';
 
 interface WebSearchToggleProps {
   readonly isLoading: boolean;
@@ -21,8 +22,8 @@ export const WebSearchToggle = ({
       }
     }}
     className={`composer-icon-btn ${isWebSearchEnabled ? 'active' : ''} ${isLoading ? 'is-disabled' : ''}`}
-    title={isWebSearchEnabled ? 'Búsqueda web activada' : 'Buscar en la web'}
-    aria-label={isWebSearchEnabled ? 'Búsqueda web activada' : 'Buscar en la web'}
+    title={isWebSearchEnabled ? t('webSearchEnabled') : t('webSearchToggle')}
+    aria-label={isWebSearchEnabled ? t('webSearchEnabled') : t('webSearchToggle')}
     aria-pressed={isWebSearchEnabled}
     aria-disabled={isLoading}
   >
@@ -38,12 +39,12 @@ interface ReasoningLevelSelectorProps {
 
 const REASONING_LEVELS: Array<{
   readonly value: ReasoningLevel;
-  readonly label: string;
-  readonly title: string;
+  readonly labelKey: TranslationKey;
+  readonly titleKey: TranslationKey;
 }> = [
-  { value: 'low', label: 'Instant', title: 'Razonamiento instantáneo' },
-  { value: 'medium', label: 'Smart', title: 'Razonamiento inteligente' },
-  { value: 'high', label: 'Max', title: 'Razonamiento máximo' },
+  { value: 'low', labelKey: 'reasoningLevelLow', titleKey: 'reasoningInstant' },
+  { value: 'medium', labelKey: 'reasoningLevelMedium', titleKey: 'reasoningSmart' },
+  { value: 'high', labelKey: 'reasoningLevelHigh', titleKey: 'reasoningMax' },
 ];
 
 export const ReasoningLevelSelector = ({
@@ -67,6 +68,12 @@ export const ReasoningLevelSelector = ({
   const activeLevel =
     REASONING_LEVELS.find((l) => l.value === reasoningLevel) || REASONING_LEVELS[1];
 
+  if (!activeLevel) {
+    return null;
+  }
+
+  const closeMenu = () => setIsOpen(false);
+
   return (
     <div className="relative inline-block text-left" ref={containerRef}>
       <button
@@ -80,12 +87,21 @@ export const ReasoningLevelSelector = ({
             setIsOpen(!isOpen);
           }
         }}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape' && isOpen) {
+            e.stopPropagation();
+            closeMenu();
+          }
+        }}
         className={`composer-tool-btn ${isOpen ? 'active' : ''}`}
-        title="Nivel de razonamiento del modelo"
+        title={t('reasoningLevelTitle')}
+        aria-label={t('reasoningLevelTitle')}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
         disabled={isLoading}
       >
         <Zap size={14} className="opacity-70" />
-        <span>{activeLevel.label}</span>
+        <span>{t(activeLevel.labelKey)}</span>
         <ChevronDown
           size={12}
           className={`opacity-50 transition-transform ${isOpen ? 'rotate-180' : ''}`}
@@ -93,13 +109,25 @@ export const ReasoningLevelSelector = ({
       </button>
 
       {isOpen && (
-        <div className="reasoning-dropdown-menu focus:outline-none">
+        <div
+          className="reasoning-dropdown-menu focus:outline-none"
+          role="menu"
+          aria-label={t('reasoningLevelTitle')}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.stopPropagation();
+              closeMenu();
+            }
+          }}
+        >
           {REASONING_LEVELS.map((level) => {
             const isSelected = reasoningLevel === level.value;
             return (
               <button
                 key={level.value}
                 type="button"
+                role="menuitemradio"
+                aria-checked={isSelected}
                 onClick={() => {
                   setReasoningLevel(level.value);
                   setIsOpen(false);
@@ -109,9 +137,9 @@ export const ReasoningLevelSelector = ({
                     ? 'text-[var(--text-primary)] font-semibold'
                     : 'text-[var(--text-secondary)]'
                 }`}
-                title={level.title}
+                title={t(level.titleKey)}
               >
-                <span>{level.label}</span>
+                <span>{t(level.labelKey)}</span>
                 {isSelected && <Check size={12} className="text-[var(--accent)]" />}
               </button>
             );
