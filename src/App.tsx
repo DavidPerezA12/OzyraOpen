@@ -18,7 +18,10 @@ import { AppToaster } from './components/App/AppToaster';
 import { ChatComposerDock } from './components/App/ChatComposerDock';
 import { CollapsedChatActions } from './components/App/CollapsedChatActions';
 import { WelcomeEmptyState } from './components/App/WelcomeEmptyState';
+import { ZoneErrorFallback } from './components/App/ZoneErrorFallback';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ScrollToBottom } from './components/ui/ScrollToBottom';
+import { useConfirm } from './hooks/useConfirm';
 
 // Config & Models
 import {
@@ -32,6 +35,7 @@ import type { Chat as ChatType } from './types';
 
 // Hooks
 import { useLocalUsageCounters } from './hooks/useLocalUsageCounters';
+import { useFavorites } from './hooks/useFavorites';
 import { useAppBootstrap } from './hooks/useAppBootstrap';
 import { useAppUiState } from './hooks/useAppUiState';
 import { useChatGeneration } from './hooks/useChatGeneration';
@@ -48,22 +52,19 @@ import {
   savePreferencesToLocalStorage,
   updatePreferencesInDatabase,
 } from './utils/userPreferences';
-import { getInitialLanguage, LANGUAGE_STORAGE_KEY, translate, type Language } from './i18n';
-
-const readLocalPreference = (key: string): string => {
-  if (typeof window === 'undefined') {
-    return '';
-  }
-
-  try {
-    return window.localStorage.getItem(key) ?? '';
-  } catch {
-    return '';
-  }
-};
+import { readLocalStorage, removeLocalStorage, writeLocalStorage } from './utils/browserStorage';
+import {
+  getCurrentLanguage,
+  getInitialLanguage,
+  LANGUAGE_STORAGE_KEY,
+  setCurrentLanguage,
+  translate,
+  type Language,
+} from './i18n';
+import { logger } from './utils/logger';
 
 const getInitialDarkMode = (): boolean => {
-  const savedTheme = readLocalPreference('theme');
+  const savedTheme = readLocalStorage('theme');
   if (savedTheme) {
     return savedTheme === 'dark';
   }
@@ -75,7 +76,7 @@ const getInitialDarkMode = (): boolean => {
 const copyToClipboard = async (text: string): Promise<void> => {
   const success = await copyTextToClipboard(text);
   if (!success) {
-    toast.error('Error al copiar el texto');
+    toast.error(translate(getCurrentLanguage(), 'copyError'));
   }
 };
 
@@ -136,7 +137,7 @@ function App() {
     isDarkMode: getInitialDarkMode(),
     language: getInitialLanguage(),
     inputValue: '',
-    welcomeCategory: 'Explorar',
+    welcomeCategory: 'explore',
     showSettings: false,
     isModelDropdownOpen: false,
     modelSearchQuery: '',
@@ -145,26 +146,33 @@ function App() {
     showChatCustomization: false,
     currentChatCustomizationInput: '',
     isImprovingChatCustomization: false,
-    userName: readLocalPreference('userName'),
-    userKnowledge: readLocalPreference('userKnowledge'),
-    userTraits: readLocalPreference('userTraits'),
-    userAdditionalInfo: readLocalPreference('userAdditionalInfo'),
+    userName: readLocalStorage('userName') ?? '',
+    userKnowledge: readLocalStorage('userKnowledge') ?? '',
+    userTraits: readLocalStorage('userTraits') ?? '',
+    userAdditionalInfo: readLocalStorage('userAdditionalInfo') ?? '',
     uploadedImages: [],
     editingMessageId: null,
     editingContent: '',
   }));
   const t = useCallback(
-    (key: Parameters<typeof translate>[1]) => translate(language, key),
+    (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) =>
+      translate(language, key, params),
     [language]
   );
 
+  useEffect(() => {
+    setCurrentLanguage(language);
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = language;
+    }
+  }, [language]);
+
   const setLanguage = useCallback(
     (nextLanguage: Language) => {
+      setCurrentLanguage(nextLanguage);
       setLanguageState(nextLanguage);
-      try {
-        localStorage.setItem(LANGUAGE_STORAGE_KEY, nextLanguage);
-      } catch (error) {
-        console.warn('No se pudo guardar el idioma seleccionado', error);
+      if (!writeLocalStorage(LANGUAGE_STORAGE_KEY, nextLanguage)) {
+        logger.warn('No se pudo guardar el idioma seleccionado');
       }
     },
     [setLanguageState]
@@ -252,6 +260,12 @@ function App() {
 
   // Autoscroll ahora lo gestiona el propio ChatContainer
 
+  // Confirmaciones accesibles (sustituye a window.confirm bloqueante).
+  const { confirm, confirmDialog } = useConfirm();
+
+  // Favoritos de chats (antes el filtro existía pero el conjunto siempre vacío).
+  const { favorites, toggleFavorite } = useFavorites();
+
   useEffect(() => {
     const textarea = textareaRef.current;
     if (textarea) {
@@ -309,7 +323,11 @@ function App() {
       if (!chatToDelete) {
         return;
       }
-      if (!window.confirm(`¿Seguro que quieres borrar "${chatToDelete.title}"?`)) {
+      const confirmed = await confirm({
+        title: t('deleteChatConfirmTitle'),
+        message: t('deleteChatConfirmMessage', { title: chatToDelete.title }),
+      });
+      if (!confirmed) {
         return;
       }
 
@@ -319,30 +337,32 @@ function App() {
           const remainingChats = chats
             .filter((chat) => chat.id !== chatId)
             .sort((a, b) => b.createdAt - a.createdAt);
-          const nextChat = remainingChats.length > 0 ? remainingChats[0] : null;
+          const nextChat = remainingChats[0] ?? null;
           setCurrentChat(nextChat);
           if (nextChat) {
             setSelectedModel(getValidModelId(nextChat.model));
-            localStorage.setItem('lastActiveChatId', nextChat.id);
+            writeLocalStorage('lastActiveChatId', nextChat.id);
           } else {
             setSelectedModel(DEFAULT_MODEL_ID);
-            localStorage.removeItem('lastActiveChatId');
+            removeLocalStorage('lastActiveChatId');
           }
         }
       } catch (error) {
-        console.error('[deleteChat] Error al eliminar chat:', error);
-        toast.error('Error al eliminar la conversación.');
+        logger.error('[deleteChat] Error al eliminar chat:', error);
+        toast.error(t('deleteChatError'));
       }
     },
-    [chats, currentChat?.id, deleteChatHook, setCurrentChat, setSelectedModel]
+    [chats, confirm, currentChat?.id, deleteChatHook, setCurrentChat, setSelectedModel, t]
   );
 
   const toggleTheme = useCallback(() => {
     setIsDarkMode((currentIsDarkMode) => {
       const nextIsDarkMode = !currentIsDarkMode;
-      localStorage.setItem('theme', nextIsDarkMode ? 'dark' : 'light');
+      writeLocalStorage('theme', nextIsDarkMode ? 'dark' : 'light');
       document.body.classList.toggle('dark', nextIsDarkMode);
       document.body.classList.toggle('light', !nextIsDarkMode);
+      document.documentElement.dataset.theme = nextIsDarkMode ? 'dark' : 'light';
+      document.documentElement.style.colorScheme = nextIsDarkMode ? 'dark' : 'light';
       return nextIsDarkMode;
     });
   }, [setIsDarkMode]);
@@ -350,24 +370,34 @@ function App() {
   useEffect(() => {
     document.body.classList.toggle('dark', isDarkMode);
     document.body.classList.toggle('light', !isDarkMode);
+    document.documentElement.dataset.theme = isDarkMode ? 'dark' : 'light';
+    document.documentElement.style.colorScheme = isDarkMode ? 'dark' : 'light';
   }, [isDarkMode]);
 
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    const chatTitle = currentChat?.title?.trim();
+    document.title = chatTitle ? `${chatTitle} — Ozyra Open` : 'Ozyra Open';
+  }, [currentChat?.title]);
+
   const deleteAllChats = useCallback(async () => {
-    if (
-      !window.confirm(
-        '¿Estás seguro de que quieres borrar TODAS las conversaciones? Esta acción no se puede deshacer.'
-      )
-    ) {
+    const confirmed = await confirm({
+      title: t('deleteAllChatsTitle'),
+      message: t('deleteAllChatsConfirm'),
+    });
+    if (!confirmed) {
       return;
     }
     try {
       await deleteAllChatsHook();
       setShowSettings(false);
     } catch (error) {
-      console.error('[deleteAllChats] Error al borrar chats:', error);
-      toast.error('Error al eliminar las conversaciones.');
+      logger.error('[deleteAllChats] Error al borrar chats:', error);
+      toast.error(t('deleteChatsError'));
     }
-  }, [deleteAllChatsHook, setShowSettings]);
+  }, [confirm, deleteAllChatsHook, setShowSettings, t]);
 
   // Guardar preferencias (delegado a utilidad)
   const handleSavePreferences = useCallback(
@@ -382,12 +412,12 @@ function App() {
         try {
           await updatePreferencesInDatabase(userId, prefs);
         } catch (err) {
-          console.error('Error al actualizar preferencias locales:', err);
-          toast.error('Error al guardar preferencias en el perfil local');
+          logger.error('Error al actualizar preferencias locales:', err);
+          toast.error(t('savePreferencesError'));
         }
       }
     },
-    [setUserAdditionalInfo, setUserKnowledge, setUserName, setUserTraits, userId]
+    [setUserAdditionalInfo, setUserKnowledge, setUserName, setUserTraits, userId, t]
   );
 
   // Fijar/desfijar chat delegando en el hook centralizado
@@ -395,8 +425,8 @@ function App() {
     try {
       await togglePinChatHook(chatId);
     } catch (error) {
-      console.error('[togglePinChat] Error al actualizar fijado:', error);
-      toast.error('Error al actualizar fijado');
+      logger.error('[togglePinChat] Error al actualizar fijado:', error);
+      toast.error(t('updatePinError'));
     }
   };
 
@@ -430,8 +460,8 @@ function App() {
     try {
       await updateChatTitleHook(chatId, newTitle);
     } catch (error) {
-      console.error('Error al actualizar título en historial local:', error);
-      toast.error('Error al actualizar título');
+      logger.error('Error al actualizar título en historial local:', error);
+      toast.error(t('updateTitleError'));
     }
   };
 
@@ -467,9 +497,9 @@ function App() {
 
     if (result.chats.length > 0) {
       setChats((prevChats) => mergeImportedChats(prevChats, result.chats));
-      toast.success(`${result.chats.length} chats importados correctamente`);
+      toast.success(t('importSuccess', { count: result.chats.length }));
     }
-  }, [setChats, userId]);
+  }, [setChats, userId, t]);
 
   const closeAdvancedSearch = useCallback(
     () => setShowAdvancedSearch(false),
@@ -553,20 +583,22 @@ function App() {
     >
       <AppToaster isDarkMode={isDarkMode} />
 
-      <ChatSidebar
-        sidebarOpen={sidebarOpen}
-        setSidebarOpen={setSidebarOpen}
-        currentChat={currentChat}
-        chats={chats}
-        setCurrentChat={setCurrentChat}
-        createNewChat={startNewChat}
-        togglePinChat={togglePinChat}
-        exportChat={exportChatToJSON}
-        deleteChat={deleteChat}
-        setShowSettings={setShowSettings}
-        updateChatTitle={updateChatTitle}
-        generatingChatIds={generatingChatIds}
-      />
+      <ErrorBoundary renderFallback={(retry) => <ZoneErrorFallback onRetry={retry} />}>
+        <ChatSidebar
+          sidebarOpen={sidebarOpen}
+          setSidebarOpen={setSidebarOpen}
+          currentChat={currentChat}
+          chats={chats}
+          setCurrentChat={setCurrentChat}
+          createNewChat={startNewChat}
+          togglePinChat={togglePinChat}
+          exportChat={exportChatToJSON}
+          deleteChat={deleteChat}
+          setShowSettings={setShowSettings}
+          updateChatTitle={updateChatTitle}
+          generatingChatIds={generatingChatIds}
+        />
+      </ErrorBoundary>
 
       <div
         className="flex-1 flex flex-col min-w-0 relative"
@@ -578,23 +610,28 @@ function App() {
 
         <div className="flex-1 overflow-y-auto custom-scrollbar" ref={messagesContainerRef}>
           {currentChat && currentChat.messages.length > 0 ? (
-            <Chat
-              currentChat={currentChat}
-              isDarkMode={isDarkMode}
-              isLoading={isLoading}
-              partialResponse={partialResponse}
-              streamingComplete={streamingComplete}
-              selectedModel={selectedModel}
-              editingMessageId={editingMessageId}
-              editingContent={editingContent}
-              copyToClipboard={copyToClipboard}
-              startEditingMessage={startEditingMessage}
-              saveMessageEdit={saveMessageEdit}
-              cancelMessageEdit={cancelMessageEdit}
-              regenerateResponse={regenerateResponse}
-              setEditingContent={setEditingContent}
-              availableModels={availableModels}
-            />
+            <ErrorBoundary
+              resetKeys={[currentChat.id]}
+              renderFallback={(retry) => <ZoneErrorFallback onRetry={retry} />}
+            >
+              <Chat
+                currentChat={currentChat}
+                isDarkMode={isDarkMode}
+                isLoading={isLoading}
+                partialResponse={partialResponse}
+                streamingComplete={streamingComplete}
+                selectedModel={selectedModel}
+                editingMessageId={editingMessageId}
+                editingContent={editingContent}
+                copyToClipboard={copyToClipboard}
+                startEditingMessage={startEditingMessage}
+                saveMessageEdit={saveMessageEdit}
+                cancelMessageEdit={cancelMessageEdit}
+                regenerateResponse={regenerateResponse}
+                setEditingContent={setEditingContent}
+                availableModels={availableModels}
+              />
+            </ErrorBoundary>
           ) : (
             <WelcomeEmptyState
               isLocalProfileLoading={isLocalProfileLoading}
@@ -607,43 +644,44 @@ function App() {
         </div>
 
         <ChatComposerDock>
-          <ChatMessageBar
-            uiState={{
-              isDarkMode,
-              isLoading,
-              isModelDropdownOpen,
-              showChatCustomization,
-              isImprovingChatCustomization,
-            }}
-            inputValue={inputValue}
-            setInputValue={setInputValue}
-            handleSubmit={handleSubmit}
-            currentChat={currentChat}
-            selectedModel={selectedModel}
-            setIsModelDropdownOpen={setIsModelDropdownOpen}
-            modelDropdownRef={modelDropdownRef}
-            modelSearchQuery={modelSearchQuery}
-            setModelSearchQuery={setModelSearchQuery}
-            enabledModelIds={enabledModelIds}
-            handleModelSelect={handleModelSelect}
-            setShowSettings={setShowSettings}
-            setShowChatCustomization={setShowChatCustomization}
-            currentChatCustomizationInput={currentChatCustomizationInput}
-            setCurrentChatCustomizationInput={setCurrentChatCustomizationInput}
-            toggleChatCustomizationPopup={toggleChatCustomizationPopup}
-            handleSaveChatCustomization={handleSaveChatCustomization}
-            handleImproveChatCustomization={handleImproveChatCustomization}
-            textareaRef={textareaRef}
-            cancelGeneration={cancelGeneration}
-            uploadedImages={uploadedImages}
-            setUploadedImages={setUploadedImages}
-          />
+          <ErrorBoundary renderFallback={(retry) => <ZoneErrorFallback onRetry={retry} />}>
+            <ChatMessageBar
+              uiState={{
+                isDarkMode,
+                isLoading,
+                isModelDropdownOpen,
+                showChatCustomization,
+                isImprovingChatCustomization,
+              }}
+              inputValue={inputValue}
+              setInputValue={setInputValue}
+              handleSubmit={handleSubmit}
+              currentChat={currentChat}
+              selectedModel={selectedModel}
+              setIsModelDropdownOpen={setIsModelDropdownOpen}
+              modelDropdownRef={modelDropdownRef}
+              modelSearchQuery={modelSearchQuery}
+              setModelSearchQuery={setModelSearchQuery}
+              enabledModelIds={enabledModelIds}
+              handleModelSelect={handleModelSelect}
+              setShowSettings={setShowSettings}
+              setShowChatCustomization={setShowChatCustomization}
+              currentChatCustomizationInput={currentChatCustomizationInput}
+              setCurrentChatCustomizationInput={setCurrentChatCustomizationInput}
+              toggleChatCustomizationPopup={toggleChatCustomizationPopup}
+              handleSaveChatCustomization={handleSaveChatCustomization}
+              handleImproveChatCustomization={handleImproveChatCustomization}
+              textareaRef={textareaRef}
+              cancelGeneration={cancelGeneration}
+              uploadedImages={uploadedImages}
+              setUploadedImages={setUploadedImages}
+            />
+          </ErrorBoundary>
         </ChatComposerDock>
       </div>
 
       <Suspense fallback={null}>
         <SettingsModal
-          key={showSettings ? 'open' : 'closed'}
           showSettings={showSettings}
           setShowSettings={setShowSettings}
           isDarkMode={isDarkMode}
@@ -670,12 +708,15 @@ function App() {
         chats={chats}
         availableModelIds={availableModels.map((model) => model.id)}
         isDarkMode={isDarkMode}
+        favorites={favorites}
+        onToggleFavorite={toggleFavorite}
         onCloseAdvancedSearch={closeAdvancedSearch}
         onAdvancedSearchSelect={handleAdvancedSearchSelect}
         onCloseCommandPalette={closeCommandPalette}
         onCommandPaletteSelect={handleCommandPaletteSelect}
         onCommandPaletteAction={handleCommandPaletteAction}
       />
+      {confirmDialog}
 
       {/* Scroll to bottom button */}
       <ScrollToBottom

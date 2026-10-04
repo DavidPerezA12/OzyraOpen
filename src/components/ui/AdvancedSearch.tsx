@@ -9,12 +9,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Calendar, Filter, MessageSquare, Search, SlidersHorizontal, Star, X } from 'lucide-react';
 import type { Chat } from '../../types';
 import { useSearch, type SearchResult } from '../../hooks/useSearch';
+import { getCurrentLanguage, t } from '../../i18n';
 
 interface AdvancedSearchProps {
   isOpen: boolean;
   onClose: () => void;
   chats?: Chat[];
   favorites?: Set<string>;
+  onToggleFavorite?: (chatId: string) => void;
   onSelectChat?: (chatId: string) => void;
   availableModels?: string[];
   isDarkMode?: boolean;
@@ -23,14 +25,13 @@ interface AdvancedSearchProps {
 const EMPTY_CHATS: Chat[] = [];
 const EMPTY_FAVORITES = new Set<string>();
 const EMPTY_MODELS: string[] = [];
-const CHAT_DATE_FORMATTER = new Intl.DateTimeFormat('es', {
-  day: '2-digit',
-  month: 'short',
-  year: 'numeric',
-});
 
 const formatChatDate = (timestamp: number): string =>
-  CHAT_DATE_FORMATTER.format(new Date(timestamp));
+  new Intl.DateTimeFormat(getCurrentLanguage(), {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(timestamp));
 
 const getLastActivityTimestamp = (chat: Chat): number => {
   if (chat.messages.length === 0) {
@@ -82,7 +83,7 @@ const SearchFiltersPanel: React.FC<SearchFiltersPanelProps> = ({
           onChange={(event) => onModelChange(event.target.value || undefined)}
           className="min-w-0 flex-1 bg-transparent text-[var(--text-primary)] outline-none"
         >
-          <option value="">Todos los modelos</option>
+          <option value="">{t('asAllModels')}</option>
           {availableModels.map((modelId) => (
             <option key={modelId} value={modelId}>
               {normalizeModelLabel(modelId)}
@@ -98,7 +99,7 @@ const SearchFiltersPanel: React.FC<SearchFiltersPanelProps> = ({
           onChange={(event) => onTitleOnlyChange(event.target.checked || undefined)}
           className="h-4 w-4 accent-[var(--color-primary)]"
         />
-        Solo titulo
+        {t('asTitleOnly')}
       </label>
 
       <label className="flex items-center gap-2 rounded-[var(--radius-md)] border border-[var(--border-primary)] bg-[var(--bg-tertiary)] px-3 py-2 text-sm text-[var(--text-secondary)]">
@@ -108,7 +109,7 @@ const SearchFiltersPanel: React.FC<SearchFiltersPanelProps> = ({
           onChange={(event) => onFavoritesChange(event.target.checked || undefined)}
           className="h-4 w-4 accent-[var(--color-primary)]"
         />
-        Favoritos
+        {t('asFavorites')}
       </label>
     </div>
 
@@ -118,7 +119,7 @@ const SearchFiltersPanel: React.FC<SearchFiltersPanelProps> = ({
         onClick={onClear}
         className="mt-3 text-xs font-medium text-[var(--color-primary)] hover:underline"
       >
-        Limpiar filtros
+        {t('asClearFilters')}
       </button>
     )}
   </div>
@@ -130,8 +131,9 @@ interface SearchResultsProps {
   query: string;
   favorites: ReadonlySet<string>;
   isDarkMode: boolean;
-  resultRefs: React.MutableRefObject<(HTMLButtonElement | null)[]>;
+  resultRefs: React.MutableRefObject<(HTMLDivElement | null)[]>;
   onSelectChat: (chatId: string) => void;
+  onToggleFavorite?: (chatId: string) => void;
   onSelectedIndexChange: (index: number) => void;
 }
 
@@ -143,27 +145,32 @@ const SearchResults: React.FC<SearchResultsProps> = ({
   isDarkMode,
   resultRefs,
   onSelectChat,
+  onToggleFavorite,
   onSelectedIndexChange,
 }) => (
   <div className="max-h-[30rem] overflow-y-auto py-3 custom-scrollbar">
     {results.length === 0 ? (
       <div className="px-6 py-12 text-center text-sm text-[var(--text-muted)]">
         <Search className="mx-auto mb-3 h-8 w-8 opacity-60" />
-        <p className="font-medium text-[var(--text-secondary)]">Sin resultados</p>
-        <p className="mt-1 text-xs">Prueba con otro texto o ajusta los filtros.</p>
+        <p className="font-medium text-[var(--text-secondary)]">{t('sidebarNoResults')}</p>
+        <p className="mt-1 text-xs">{t('asEmptyHint')}</p>
       </div>
     ) : (
-      <div className="space-y-1 px-2">
+      <div className="space-y-1 px-2" role="listbox" aria-label={t('sidebarSearchLabel')}>
         {results.map((result, index) => {
           const { chat } = result;
           const isSelected = index === selectedIndex;
           const firstFragment = result.matchedFragments[0]?.fragment;
+          const isFavorite = favorites.has(chat.id);
 
           return (
-            <button
+            <div
               key={chat.id}
-              ref={(element) => (resultRefs.current[index] = element)}
-              type="button"
+              ref={(element) => {
+                resultRefs.current[index] = element;
+              }}
+              role="option"
+              aria-selected={isSelected}
               onClick={() => onSelectChat(chat.id)}
               onMouseEnter={() => onSelectedIndexChange(index)}
               className={`palette-item group ${isSelected ? 'palette-item--selected' : ''}`}
@@ -172,18 +179,30 @@ const SearchResults: React.FC<SearchResultsProps> = ({
 
               <div className="min-w-0 flex-1 text-left">
                 <div className="flex items-center gap-2">
-                  {favorites.has(chat.id) && (
-                    <Star className="h-3.5 w-3.5 flex-shrink-0 fill-current text-[var(--color-primary)]" />
-                  )}
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onToggleFavorite?.(chat.id);
+                    }}
+                    className="flex-shrink-0 rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--color-primary)]"
+                    title={isFavorite ? t('removeFavorite') : t('addFavorite')}
+                    aria-label={isFavorite ? t('removeFavorite') : t('addFavorite')}
+                    aria-pressed={isFavorite}
+                  >
+                    <Star
+                      className={`h-3.5 w-3.5 flex-shrink-0 ${isFavorite ? 'fill-current text-[var(--color-primary)]' : ''}`}
+                    />
+                  </button>
                   <span className="truncate font-medium text-[var(--text-primary)]">
-                    {chat.title || 'Sin titulo'}
+                    {chat.title || t('untitledChat')}
                   </span>
                 </div>
                 <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-[var(--text-muted)]">
                   <Calendar className="h-3 w-3 flex-shrink-0" />
                   <span>{formatChatDate(getLastActivityTimestamp(chat))}</span>
                   <span aria-hidden="true">·</span>
-                  <span>{chat.messages.length} mensajes</span>
+                  <span>{t('messagesCount', { count: chat.messages.length })}</span>
                   {chat.model && (
                     <>
                       <span aria-hidden="true">·</span>
@@ -207,7 +226,7 @@ const SearchResults: React.FC<SearchResultsProps> = ({
                   {result.matchCount}
                 </span>
               )}
-            </button>
+            </div>
           );
         })}
       </div>
@@ -221,13 +240,14 @@ const AdvancedSearchDialog: React.FC<AdvancedSearchDialogProps> = ({
   onClose,
   chats = EMPTY_CHATS,
   favorites = EMPTY_FAVORITES,
+  onToggleFavorite,
   onSelectChat,
   availableModels = EMPTY_MODELS,
   isDarkMode = false,
 }) => {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const resultRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const resultRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
 
@@ -355,16 +375,15 @@ const AdvancedSearchDialog: React.FC<AdvancedSearchDialogProps> = ({
   return (
     <dialog
       ref={dialogRef}
-      aria-label="Búsqueda avanzada"
+      aria-label={t('asTitle')}
       className="fixed inset-0 z-[100] m-0 h-full max-h-none w-full max-w-none border-0 bg-transparent p-0"
       onCancel={(event) => {
         event.preventDefault();
         onClose();
       }}
     >
-      <button
-        type="button"
-        aria-label="Cerrar búsqueda avanzada"
+      <div
+        aria-hidden="true"
         className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm animate-fade-in"
         onClick={onClose}
       />
@@ -380,8 +399,8 @@ const AdvancedSearchDialog: React.FC<AdvancedSearchDialogProps> = ({
                 value={query}
                 onChange={(event) => changeQuery(event.target.value)}
                 onKeyDown={handleKeyDown}
-                aria-label="Buscar en conversaciones"
-                placeholder="Buscar en conversaciones..."
+                aria-label={t('asSearchLabel')}
+                placeholder={t('asSearchPlaceholder')}
                 className="flex-1 bg-transparent text-base font-medium text-[var(--text-primary)] outline-none placeholder-[var(--text-muted)]"
               />
               {query && (
@@ -389,7 +408,7 @@ const AdvancedSearchDialog: React.FC<AdvancedSearchDialogProps> = ({
                   type="button"
                   onClick={() => changeQuery('')}
                   className="rounded-[var(--radius-sm)] p-1.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--color-primary-soft)] hover:text-[var(--text-primary)]"
-                  aria-label="Limpiar busqueda"
+                  aria-label={t('clearSearch')}
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -402,7 +421,7 @@ const AdvancedSearchDialog: React.FC<AdvancedSearchDialogProps> = ({
                     ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary)]'
                     : 'text-[var(--text-muted)] hover:bg-[var(--color-primary-soft)] hover:text-[var(--text-primary)]'
                 }`}
-                aria-label="Alternar filtros"
+                aria-label={t('asToggleFilters')}
               >
                 <SlidersHorizontal className="h-4 w-4" />
               </button>
@@ -436,16 +455,14 @@ const AdvancedSearchDialog: React.FC<AdvancedSearchDialogProps> = ({
             )}
 
             <div className="flex items-center justify-between border-b border-[var(--border-primary)] px-4 py-2 text-xs text-[var(--text-muted)]">
-              <span>
-                {query.trim() ? `${totalResults} resultados` : 'Conversaciones recientes'}
-              </span>
+              <span>{query.trim() ? `${totalResults} ${t('resultsPlural')}` : t('asRecent')}</span>
               {searchHistory.length > 0 && !query.trim() && (
                 <button
                   type="button"
                   onClick={clearHistory}
                   className="font-medium text-[var(--color-primary)] hover:underline"
                 >
-                  Limpiar recientes
+                  {t('asClearRecent')}
                 </button>
               )}
             </div>
@@ -458,6 +475,7 @@ const AdvancedSearchDialog: React.FC<AdvancedSearchDialogProps> = ({
               isDarkMode={isDarkMode}
               resultRefs={resultRefs}
               onSelectChat={handleSelectChat}
+              onToggleFavorite={onToggleFavorite}
               onSelectedIndexChange={updateSelectedIndex}
             />
           </div>

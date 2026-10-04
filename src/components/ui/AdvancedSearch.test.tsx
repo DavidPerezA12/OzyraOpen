@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Chat } from '../../types';
 import { AdvancedSearch } from './AdvancedSearch';
+import { t } from '../../i18n';
 
 const chats: Chat[] = [
   {
@@ -42,13 +43,33 @@ describe('AdvancedSearch', () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText('Buscar en conversaciones'), {
+    fireEvent.change(screen.getByLabelText(t('asSearchLabel')), {
       target: { value: 'Alpha' },
     });
 
-    expect(screen.getByText('1 resultados')).toBeInTheDocument();
+    expect(screen.getByText(`1 ${t('resultsPlural')}`)).toBeInTheDocument();
     expect(screen.queryByText('Notas Beta')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Proyecto Alpha/ }));
+    fireEvent.click(screen.getByRole('option', { name: /Proyecto Alpha/ }));
     expect(onSelectChat).toHaveBeenCalledWith('chat-alpha');
+  });
+
+  it('toggles favorites from the result row', () => {
+    const onToggleFavorite = vi.fn();
+
+    render(
+      <AdvancedSearch
+        isOpen
+        onClose={vi.fn()}
+        chats={chats}
+        favorites={new Set(['chat-alpha'])}
+        onToggleFavorite={onToggleFavorite}
+        onSelectChat={vi.fn()}
+        availableModels={['openai/test-model']}
+      />
+    );
+
+    // La estrella marcada indica favorito y ofrece quitarlo.
+    fireEvent.click(screen.getByRole('button', { name: t('removeFavorite') }));
+    expect(onToggleFavorite).toHaveBeenCalledWith('chat-alpha');
   });
 });
