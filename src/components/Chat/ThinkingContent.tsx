@@ -19,16 +19,19 @@
  */
 
 import { Brain, ChevronDown, Copy, Loader2 } from 'lucide-react';
-import React, { useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { createMarkdownComponents } from './MarkdownComponents';
+import React, { Suspense, useState } from 'react';
+import { t } from '../../i18n';
 
 interface ThinkingContentProps {
   readonly content: string;
   readonly isStreaming?: boolean;
   readonly copyToClipboard: (text: string) => void;
 }
+
+// Mismo chunk diferido que el contenido de mensajes.
+const RichMarkdown = React.lazy(() =>
+  import('./RichMarkdown').then((module) => ({ default: module.RichMarkdown }))
+);
 
 export const ThinkingContent: React.FC<ThinkingContentProps> = ({
   content,
@@ -48,7 +51,7 @@ export const ThinkingContent: React.FC<ThinkingContentProps> = ({
           aria-expanded={isExpanded}
         >
           {isStreaming ? <Loader2 size={13} className="animate-spin" /> : <Brain size={13} />}
-          <span>{isStreaming ? 'Razonando…' : 'Razonamiento'}</span>
+          <span>{isStreaming ? t('reasoningStreaming') : t('reasoningTitle')}</span>
         </button>
 
         {!isStreaming && trimmed && (
@@ -56,8 +59,8 @@ export const ThinkingContent: React.FC<ThinkingContentProps> = ({
             type="button"
             className="thinking-icon-btn"
             onClick={() => copyToClipboard(content)}
-            title="Copiar razonamiento"
-            aria-label="Copiar razonamiento"
+            title={t('copyReasoning')}
+            aria-label={t('copyReasoning')}
           >
             <Copy size={13} />
           </button>
@@ -67,8 +70,8 @@ export const ThinkingContent: React.FC<ThinkingContentProps> = ({
           type="button"
           className="thinking-icon-btn"
           onClick={() => setIsExpanded((v) => !v)}
-          title={isExpanded ? 'Contraer' : 'Expandir'}
-          aria-label={isExpanded ? 'Contraer razonamiento' : 'Expandir razonamiento'}
+          title={isExpanded ? t('collapseAction') : t('expandAction')}
+          aria-label={isExpanded ? t('collapseReasoning') : t('expandReasoning')}
           aria-expanded={isExpanded}
         >
           <ChevronDown
@@ -80,12 +83,13 @@ export const ThinkingContent: React.FC<ThinkingContentProps> = ({
 
       {isExpanded && (
         <div className="thinking-body custom-scrollbar">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={createMarkdownComponents(copyToClipboard)}
-          >
-            {content}
-          </ReactMarkdown>
+          {isStreaming ? (
+            <div className="whitespace-pre-wrap">{content}</div>
+          ) : (
+            <Suspense fallback={<div className="whitespace-pre-wrap">{content}</div>}>
+              <RichMarkdown content={content} copyToClipboard={copyToClipboard} />
+            </Suspense>
+          )}
         </div>
       )}
     </div>

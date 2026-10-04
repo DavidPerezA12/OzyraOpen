@@ -51,6 +51,8 @@ import swift from 'react-syntax-highlighter/dist/esm/languages/prism/swift';
 import tsx from 'react-syntax-highlighter/dist/esm/languages/prism/tsx';
 import typescript from 'react-syntax-highlighter/dist/esm/languages/prism/typescript';
 import yaml from 'react-syntax-highlighter/dist/esm/languages/prism/yaml';
+import { t } from '../../i18n';
+import { isSafeLinkHref } from '../../utils/safeUrl';
 
 SyntaxHighlighter.registerLanguage('bash', bash);
 SyntaxHighlighter.registerLanguage('c', cpp);
@@ -137,7 +139,7 @@ type CodeComponentProps = React.HTMLAttributes<HTMLElement> & {
 };
 
 export const createMarkdownComponents = (copyToClipboard: (text: string) => void): Components => ({
-  code({ inline, className, children, ...restProps }: CodeComponentProps) {
+  code({ inline, className, children, node: _node, ...restProps }: CodeComponentProps) {
     const match = /language-(\w+)/.exec(className || '');
     const language = match ? match[1] : 'text';
 
@@ -149,9 +151,10 @@ export const createMarkdownComponents = (copyToClipboard: (text: string) => void
             type="button"
             onClick={() => copyToClipboard(String(children))}
             className="code-block__copy"
+            aria-label={t('copyAction')}
           >
-            <Copy size={12} />
-            <span>Copiar</span>
+            <Copy size={12} aria-hidden="true" />
+            <span>{t('copyAction')}</span>
           </button>
         </div>
         <div className="relative">
@@ -192,17 +195,26 @@ export const createMarkdownComponents = (copyToClipboard: (text: string) => void
   },
   p: (props) => {
     // Evitar que los párrafos contengan divs que puedan causar problemas de DOM nesting
-    const { children, ...restProps } = props;
+    const { children, node: _node, ...restProps } = props as typeof props & { node?: unknown };
     return (
       <div className="mb-1 last:mb-0" {...restProps}>
         {children}
       </div>
     );
   },
-  ul: (props) => <ul className="mb-4 last:mb-0 list-disc pl-6 space-y-2" {...props} />,
-  ol: (props) => <ol className="mb-4 last:mb-0 list-decimal pl-6 space-y-2" {...props} />,
-  li: (props) => <li className="leading-relaxed" {...props} />,
-  h1: ({ children, ...props }) => (
+  ul: (props) => {
+    const { node: _node, ...rest } = props as typeof props & { node?: unknown };
+    return <ul className="mb-4 last:mb-0 list-disc pl-6 space-y-2" {...rest} />;
+  },
+  ol: (props) => {
+    const { node: _node, ...rest } = props as typeof props & { node?: unknown };
+    return <ol className="mb-4 last:mb-0 list-decimal pl-6 space-y-2" {...rest} />;
+  },
+  li: (props) => {
+    const { node: _node, ...rest } = props as typeof props & { node?: unknown };
+    return <li className="leading-relaxed" {...rest} />;
+  },
+  h1: ({ children, node: _node, ...props }) => (
     <h1
       className="text-xl font-semibold mb-4 mt-6 first:mt-0 text-[var(--text-primary)]"
       {...props}
@@ -210,7 +222,7 @@ export const createMarkdownComponents = (copyToClipboard: (text: string) => void
       {children}
     </h1>
   ),
-  h2: ({ children, ...props }) => (
+  h2: ({ children, node: _node, ...props }) => (
     <h2
       className="text-lg font-semibold mb-3 mt-5 first:mt-0 text-[var(--text-primary)]"
       {...props}
@@ -218,7 +230,7 @@ export const createMarkdownComponents = (copyToClipboard: (text: string) => void
       {children}
     </h2>
   ),
-  h3: ({ children, ...props }) => (
+  h3: ({ children, node: _node, ...props }) => (
     <h3
       className="text-base font-semibold mb-3 mt-4 first:mt-0 text-[var(--text-primary)]"
       {...props}
@@ -226,18 +238,62 @@ export const createMarkdownComponents = (copyToClipboard: (text: string) => void
       {children}
     </h3>
   ),
-  blockquote: (props) => (
-    <blockquote
-      className="border-l-[3px] border-[var(--color-primary)] bg-[var(--color-primary-soft)] pl-4 py-2 mb-4 italic text-[var(--text-secondary)] rounded-r-[var(--radius-sm)]"
-      {...props}
-    />
-  ),
-  a: ({ children, ...props }) => (
-    <a
-      className="text-[var(--color-secondary)] hover:text-[var(--color-primary)] underline underline-offset-2 transition-colors"
-      {...props}
-    >
-      {children}
-    </a>
-  ),
+  blockquote: (props) => {
+    const { node: _node, ...rest } = props as typeof props & { node?: unknown };
+    return (
+      <blockquote
+        className="border-l-[3px] border-[var(--color-primary)] bg-[var(--color-primary-soft)] pl-4 py-2 mb-4 italic text-[var(--text-secondary)] rounded-r-[var(--radius-sm)]"
+        {...rest}
+      />
+    );
+  },
+  a: ({ children, node: _node, href, ...props }) => {
+    // Bloquear javascript:/data:/vbscript: que puedan venir del modelo o de imports.
+    if (typeof href !== 'string' || !isSafeLinkHref(href)) {
+      return <span className="underline underline-offset-2 opacity-80">{children}</span>;
+    }
+    const isExternal = /^https?:\/\//i.test(href);
+    return (
+      <a
+        href={href}
+        className="text-[var(--color-primary)] hover:text-[var(--color-primary)] underline underline-offset-2 transition-colors"
+        {...(isExternal
+          ? { target: '_blank', rel: 'noopener noreferrer', referrerPolicy: 'no-referrer' }
+          : {})}
+        {...props}
+      >
+        {children}
+      </a>
+    );
+  },
+  img: ({ src, alt, node: _node, ...props }) => {
+    // react-markdown ya elimina data:/javascript:/blob: del src por defecto.
+    // Aquí además solo se permiten rutas relativas o anclas: las absolutas
+    // las bloquea la CSP igualmente y mostrarían una imagen rota (además de
+    // intentar una petición de tracking). Se muestra el alt como texto.
+    if (typeof src !== 'string' || src.trim() === '') {
+      // react-markdown ya vacía data:/javascript:/blob: antes de llegar aquí.
+      return alt ? <span className="italic opacity-80">{alt}</span> : null;
+    }
+    const trimmed = src.trim();
+    const isRelative =
+      trimmed.startsWith('/') ||
+      trimmed.startsWith('./') ||
+      trimmed.startsWith('../') ||
+      trimmed.startsWith('#') ||
+      /^[^:/?#]+(?:[/?#]|$)/.test(trimmed);
+    if (!isRelative) {
+      return alt ? <span className="italic opacity-80">{alt}</span> : null;
+    }
+    return (
+      <img
+        src={trimmed}
+        alt={alt ?? ''}
+        loading="lazy"
+        decoding="async"
+        referrerPolicy="no-referrer"
+        {...props}
+      />
+    );
+  },
 });

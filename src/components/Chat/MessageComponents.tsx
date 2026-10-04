@@ -20,8 +20,10 @@
  */
 
 import { ExternalLink, Eye, Search, Trash, X as XIcon } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { GroundedSegment } from '../../types';
+import { t } from '../../i18n';
+import { getSafeHostname, getSafeImageSrc, isSafeLinkHref } from '../../utils/safeUrl';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -44,11 +46,17 @@ interface MessageImagesProps {
 }
 
 const getImageSource = (image: { url: string; contentType?: string; data?: string }): string => {
-  if (image.data) {
-    return `data:${image.contentType ?? 'image/png'};base64,${image.data}`;
+  const safe = getSafeImageSrc(image, '');
+  if (safe) {
+    return safe;
   }
 
-  return image.url;
+  // Fallback conservador: si la URL no es http(s)/blob válida, no renderizar nada roto.
+  if (typeof image.url === 'string' && image.url.startsWith('blob:')) {
+    return image.url;
+  }
+
+  return '';
 };
 
 /**
@@ -92,65 +100,117 @@ interface GroundedSegmentsProps {
  * @param {MessageImagesProps} props - Propiedades del componente
  * @returns {JSX.Element} Elemento JSX con la galería de imágenes
  */
+
+/**
+ * Visor de imagen expandida accesible: `role="dialog"` modal, cierre con
+ * Escape, foco inicial en el botón cerrar y restauración del foco al salir.
+ */
+const ImageZoomDialog: React.FC<{ imageSrc: string; onClose: () => void }> = ({
+  imageSrc,
+  onClose,
+}) => {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<Element | null>(null);
+
+  useEffect(() => {
+    previousFocusRef.current = typeof document !== 'undefined' ? document.activeElement : null;
+    closeButtonRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      const previous = previousFocusRef.current;
+      if (previous instanceof HTMLElement) {
+        previous.focus();
+      }
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('zoomedImageAlt')}
+    >
+      <button
+        type="button"
+        className="absolute inset-0 cursor-default"
+        aria-label={t('closeZoomedImage')}
+        onClick={onClose}
+        tabIndex={-1}
+      />
+      <div className="relative max-w-4xl max-h-[90vh]">
+        <img
+          src={imageSrc}
+          alt={t('zoomedImageAlt')}
+          className="max-h-[90vh] max-w-full object-contain"
+        />
+        <button
+          ref={closeButtonRef}
+          type="button"
+          className="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-black/70 text-white rounded-full"
+          onClick={onClose}
+          aria-label={t('closeImage')}
+        >
+          <XIcon size={20} />
+        </button>
+      </div>
+    </div>
+  );
+};
+
 export const MessageImages: React.FC<MessageImagesProps> = ({ images, isDarkMode }) => {
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
 
   return (
     <div className="mb-2">
       <div className="flex flex-wrap gap-2 mt-1">
-        {images.map((image, index) => (
-          <div key={`${image.url}-${index}`} className="relative">
-            <button
-              type="button"
-              className={`relative cursor-pointer rounded-md overflow-hidden border ${
-                isDarkMode ? 'border-slate-700' : 'border-slate-300'
-              }`}
-              style={{ maxWidth: '150px', maxHeight: '150px' }}
-              onClick={() => setExpandedImage(getImageSource(image))}
-              aria-label={`Abrir imagen adjunta ${index + 1}`}
-            >
-              <img
-                src={getImageSource(image)}
-                alt={`Imagen adjunta ${index + 1}`}
-                className="max-h-[150px] max-w-[150px] object-contain"
-              />
-              <div
-                className={`absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 ${
-                  isDarkMode ? 'bg-slate-900/60' : 'bg-slate-800/40'
-                } transition-opacity`}
+        {images.map((image, index) => {
+          const src = getImageSource(image);
+          if (!src) {
+            return null;
+          }
+          return (
+            <div key={`${image.url}-${index}`} className="relative">
+              <button
+                type="button"
+                className={`relative cursor-pointer rounded-md overflow-hidden border ${
+                  isDarkMode ? 'border-slate-700' : 'border-slate-300'
+                }`}
+                style={{ maxWidth: '150px', maxHeight: '150px' }}
+                onClick={() => setExpandedImage(src)}
+                aria-label={t('openAttachment', { index: index + 1 })}
               >
-                <Eye className="text-white w-5 h-5" />
-              </div>
-            </button>
-          </div>
-        ))}
+                <img
+                  src={src}
+                  alt={t('openAttachment', { index: index + 1 })}
+                  className="max-h-[150px] max-w-[150px] object-contain"
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                />
+                <div
+                  className={`absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 focus-visible:opacity-100 ${
+                    isDarkMode ? 'bg-slate-900/60' : 'bg-slate-800/40'
+                  } transition-opacity`}
+                >
+                  <Eye className="text-white w-5 h-5" />
+                </div>
+              </button>
+            </div>
+          );
+        })}
       </div>
 
       {/* Visor de imagen expandida */}
       {expandedImage && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-          <button
-            type="button"
-            className="absolute inset-0"
-            aria-label="Cerrar imagen ampliada"
-            onClick={() => setExpandedImage(null)}
-          />
-          <div className="relative max-w-4xl max-h-[90vh]">
-            <img
-              src={expandedImage}
-              alt="Imagen ampliada"
-              className="max-h-[90vh] max-w-full object-contain"
-            />
-            <button
-              type="button"
-              className="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-black/70 text-white rounded-full"
-              onClick={() => setExpandedImage(null)}
-              aria-label="Cerrar imagen"
-            >
-              <XIcon size={20} />
-            </button>
-          </div>
-        </div>
+        <ImageZoomDialog imageSrc={expandedImage} onClose={() => setExpandedImage(null)} />
       )}
     </div>
   );
@@ -173,7 +233,7 @@ export const MessageImages: React.FC<MessageImagesProps> = ({ images, isDarkMode
 export const SearchQueriesIndicator: React.FC<SearchQueriesProps> = ({ queries, isDarkMode }) => (
   <div className={`mb-2 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
     <div className="flex items-center gap-1.5 font-medium">
-      <Search size={14} className="opacity-70" /> Búsquedas realizadas:
+      <Search size={14} className="opacity-70" /> {t('searchesPerformed')}:
     </div>
     <div className="mt-1 space-y-0.5 pl-5">
       {queries.map((query) => (
@@ -208,43 +268,46 @@ export const GroundedSegmentsIndicator: React.FC<GroundedSegmentsProps> = ({
       <div key={`segment-${segIdx}`} className="space-y-2">
         <div className="font-medium">{segment.text}</div>
         <div className="space-y-1">
-          {segment.sources.map((source) => (
-            <a
-              key={source.url}
-              href={source.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
-                isDarkMode
-                  ? 'bg-slate-800/50 hover:bg-slate-800'
-                  : 'bg-slate-100/50 hover:bg-slate-100'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <ExternalLink size={14} className="opacity-70" />
-                <span className="hover:underline">
-                  {source.title || new URL(source.url).hostname}
-                </span>
-              </div>
-              <div
-                className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                  source.confidence >= 90
-                    ? isDarkMode
-                      ? 'bg-green-900/30 text-green-400'
-                      : 'bg-green-100 text-green-700'
-                    : source.confidence >= 70
-                      ? isDarkMode
-                        ? 'bg-yellow-900/30 text-yellow-400'
-                        : 'bg-yellow-100 text-yellow-700'
-                      : isDarkMode
-                        ? 'bg-orange-900/30 text-orange-400'
-                        : 'bg-orange-100 text-orange-700'
+          {segment.sources
+            .filter((source) => isSafeLinkHref(source.url))
+            .map((source) => (
+              <a
+                key={source.url}
+                href={source.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                referrerPolicy="no-referrer"
+                className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+                  isDarkMode
+                    ? 'bg-slate-800/50 hover:bg-slate-800'
+                    : 'bg-slate-100/50 hover:bg-slate-100'
                 }`}
               >
-                {source.confidence}% Confianza
-              </div>
-            </a>
-          ))}
+                <div className="flex items-center gap-2">
+                  <ExternalLink size={14} className="opacity-70" />
+                  <span className="hover:underline">
+                    {source.title || getSafeHostname(source.url)}
+                  </span>
+                </div>
+                <div
+                  className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                    source.confidence >= 90
+                      ? isDarkMode
+                        ? 'bg-green-900/30 text-green-400'
+                        : 'bg-green-100 text-green-700'
+                      : source.confidence >= 70
+                        ? isDarkMode
+                          ? 'bg-yellow-900/30 text-yellow-400'
+                          : 'bg-yellow-100 text-yellow-700'
+                        : isDarkMode
+                          ? 'bg-orange-900/30 text-orange-400'
+                          : 'bg-orange-100 text-orange-700'
+                  }`}
+                >
+                  {source.confidence}% {t('confidenceLabel')}
+                </div>
+              </a>
+            ))}
         </div>
       </div>
     ))}
@@ -300,7 +363,7 @@ export const ImageUploadPreview: React.FC<ImageUploadPreviewProps> = ({
     >
       <div className="flex items-center justify-between mb-1">
         <span className={`text-xs font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
-          Imágenes adjuntas ({uploadedImages.length})
+          {t('attachedImages')} ({uploadedImages.length})
         </span>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -313,14 +376,17 @@ export const ImageUploadPreview: React.FC<ImageUploadPreviewProps> = ({
           >
             <img
               src={image.url}
-              alt={`Imagen ${index + 1}`}
+              alt={t('openAttachment', { index: index + 1 })}
               className="h-full w-full object-cover"
+              loading="lazy"
+              referrerPolicy="no-referrer"
             />
             <button
               type="button"
               onClick={() => onRemoveImage(index)}
-              className="absolute top-0.5 right-0.5 bg-black/60 hover:bg-black/80 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-              title="Eliminar imagen"
+              className="absolute top-0.5 right-0.5 bg-black/60 hover:bg-black/80 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity"
+              title={t('removeImage')}
+              aria-label={t('removeImage')}
             >
               <Trash size={10} />
             </button>

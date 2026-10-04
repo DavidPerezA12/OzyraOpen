@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as modelsModule from '../../../config/models';
 import ChatContainer from '../ChatContainer';
 import type { Chat, Message, ModelCapabilities, ModelInfo } from '../../../types';
+import { t } from '../../../i18n';
 
 const baseCapabilities: ModelCapabilities = {
   fast: false,
@@ -130,7 +131,7 @@ describe('ChatContainer', () => {
       />
     );
 
-    expect(screen.getByRole('img', { name: 'Imagen adjunta 1' })).toHaveAttribute(
+    expect(screen.getByRole('img', { name: t('openAttachment', { index: 1 }) })).toHaveAttribute(
       'src',
       'data:image/png;base64,abc123'
     );
@@ -199,10 +200,14 @@ describe('ChatContainer', () => {
       />
     );
 
-    expect(screen.getByText(/Razonando…|Razonamiento/)).toBeInTheDocument();
+    expect(
+      screen.getByText((content) =>
+        [t('reasoningStreaming'), t('reasoningTitle')].includes(content)
+      )
+    ).toBeInTheDocument();
     expect(screen.queryByText('Pensamiento intermedio')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expandir razonamiento' }));
+    fireEvent.click(screen.getByRole('button', { name: t('expandReasoning') }));
 
     expect(screen.getByText('Pensamiento intermedio')).toBeInTheDocument();
   });
@@ -244,7 +249,7 @@ describe('ChatContainer', () => {
 
     expect(screen.queryByText('Razonamiento guardado')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expandir razonamiento' }));
+    fireEvent.click(screen.getByRole('button', { name: t('expandReasoning') }));
 
     expect(screen.getByText('Razonamiento guardado')).toBeInTheDocument();
     expect(modelHasCapabilitySpy).toHaveBeenCalledWith('reasoning-model:online', 'reasoning');
@@ -277,9 +282,9 @@ describe('ChatContainer', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Copiar respuesta' }));
+    fireEvent.click(screen.getByRole('button', { name: t('copyResponse') }));
 
     expect(handlers.copyToClipboard).toHaveBeenCalledWith('Respuesta para copiar');
-    expect(screen.getByRole('button', { name: 'Respuesta copiada' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: t('responseCopied') })).toBeInTheDocument();
   });
 });

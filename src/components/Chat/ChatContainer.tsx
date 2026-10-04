@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { modelHasCapability } from '../../config/models';
+import { t } from '../../i18n';
 import type { Chat, Message, ModelInfo } from '../../types';
+import { readLocalStorage } from '../../utils/browserStorage';
 import { ChatMessageItem } from './ChatMessageItem';
 
 interface ChatContainerProps {
@@ -22,13 +24,75 @@ interface ChatContainerProps {
 }
 
 const getInitialShowThinking = (): boolean => {
-  try {
-    const stored = globalThis.localStorage?.getItem('ozyra:ui:showThinking');
-    return stored === null || stored === undefined ? true : stored === '1';
-  } catch {
-    return true;
-  }
+  const stored = readLocalStorage('ozyra:ui:showThinking');
+  return stored === null ? true : stored === '1';
 };
+
+interface ChatMessageRowProps {
+  readonly message: Message;
+  readonly isLatest: boolean;
+  readonly isDarkMode: boolean;
+  readonly isLoading: boolean;
+  readonly isStreamingAssistant: boolean;
+  readonly isExpanded: boolean;
+  readonly isCopied: boolean;
+  readonly showThinking: boolean;
+  readonly supportsReasoning: boolean;
+  readonly editingMessageId: string | null;
+  readonly editingContent: string;
+  readonly availableModels: readonly ModelInfo[];
+  readonly copyToClipboard: (text: string) => void;
+  readonly startEditingMessage: (message: Message) => void;
+  readonly saveMessageEdit: (messageId: string) => void;
+  readonly cancelMessageEdit: () => void;
+  readonly regenerateResponse: (messageId?: string) => void;
+  readonly setEditingContent: (content: string) => void;
+  readonly onCopyMessage: (message: Message) => void;
+  readonly onToggleExpansion: (messageId: string) => void;
+}
+
+// Fila memoizada: evita re-render de mensajes antiguos cuando solo cambia
+// el draft del asistente en streaming (updateMessageInChat preserva refs).
+const ChatMessageRow: React.FC<ChatMessageRowProps> = React.memo(
+  ({
+    message,
+    isLatest,
+    isDarkMode,
+    isLoading,
+    isStreamingAssistant,
+    isExpanded,
+    isCopied,
+    showThinking,
+    supportsReasoning,
+    ...rest
+  }) => {
+    const presentation = useMemo(
+      () => ({
+        isLatest,
+        isDarkMode,
+        isLoading,
+        isStreamingAssistant,
+        isExpanded,
+        isCopied,
+        showThinking,
+        supportsReasoning,
+      }),
+      [
+        isLatest,
+        isDarkMode,
+        isLoading,
+        isStreamingAssistant,
+        isExpanded,
+        isCopied,
+        showThinking,
+        supportsReasoning,
+      ]
+    );
+
+    return <ChatMessageItem message={message} presentation={presentation} {...rest} />;
+  }
+);
+ChatMessageRow.displayName = 'ChatMessageRow';
 
 const ChatContainer: React.FC<ChatContainerProps> = ({
   currentChat,
@@ -97,8 +161,9 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
   const lastAssistantId = useMemo(() => {
     const messages = currentChat?.messages ?? [];
     for (let index = messages.length - 1; index >= 0; index--) {
-      if (messages[index].role === 'assistant') {
-        return messages[index].id;
+      const message = messages[index];
+      if (message?.role === 'assistant') {
+        return message.id;
       }
     }
     return null;
@@ -106,7 +171,7 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
 
   const lastMessageId = useMemo(() => {
     const messages = currentChat?.messages ?? [];
-    return messages.length > 0 ? messages[messages.length - 1].id : null;
+    return messages.length > 0 ? (messages[messages.length - 1]?.id ?? null) : null;
   }, [currentChat?.messages]);
 
   const toggleMessageExpansion = useCallback((messageId: string) => {
@@ -144,9 +209,7 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
         className="flex-1 flex items-center justify-center"
         style={{ background: 'var(--bg-main)' }}
       >
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-          Selecciona o crea una conversación
-        </p>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>{t('emptyChatSelect')}</p>
       </div>
     );
   }
@@ -164,19 +227,17 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
           message.role !== 'user' && isLoading && message.id === lastAssistantId;
 
         return (
-          <ChatMessageItem
+          <ChatMessageRow
             key={message.id}
             message={message}
-            presentation={{
-              isLatest: lastMessageId === message.id,
-              isDarkMode,
-              isLoading,
-              isStreamingAssistant,
-              isExpanded: expandedMessages.has(message.id),
-              isCopied: copiedMessageId === message.id,
-              showThinking,
-              supportsReasoning: messageSupportsReasoning(message),
-            }}
+            isLatest={lastMessageId === message.id}
+            isDarkMode={isDarkMode}
+            isLoading={isLoading}
+            isStreamingAssistant={isStreamingAssistant}
+            isExpanded={expandedMessages.has(message.id)}
+            isCopied={copiedMessageId === message.id}
+            showThinking={showThinking}
+            supportsReasoning={messageSupportsReasoning(message)}
             editingMessageId={editingMessageId}
             editingContent={editingContent}
             availableModels={availableModels}
