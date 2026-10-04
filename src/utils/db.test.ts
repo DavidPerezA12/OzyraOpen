@@ -1,38 +1,30 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   createChat,
   createMessage,
+  DbUnavailableError,
   deleteMessagesByIds,
+  getChats,
   getMessages,
+  getProfile,
   incrementMessageUsage,
   replaceChatWithMessages,
   updateMessageContent,
   upsertProfile,
 } from './db';
+import {
+  CHATS_STORE,
+  LEGACY_DB_KEY,
+  LOCAL_DB_NAME,
+  LOCAL_DB_VERSION,
+  MESSAGES_BY_CHAT_INDEX,
+  MESSAGES_STORE,
+  MIGRATED_DB_KEY,
+  PROFILES_STORE,
+} from './localDbStore';
 
-describe('local db concurrency', () => {
-  const storage = new Map<string, string>();
-
-  beforeEach(() => {
-    storage.clear();
-    Object.defineProperty(window, 'localStorage', {
-      configurable: true,
-      value: {
-        getItem: (key: string) => storage.get(key) ?? null,
-        setItem: (key: string, value: string) => {
-          storage.set(key, value);
-        },
-        removeItem: (key: string) => {
-          storage.delete(key);
-        },
-        clear: () => {
-          storage.clear();
-        },
-      },
-    });
-  });
-
+describe('local db', () => {
   it('preserves messages created in parallel for the same chat', async () => {
     await createChat({
       id: 'chat-1',
@@ -98,7 +90,7 @@ describe('local db concurrency', () => {
     await updateMessageContent('msg-1', 'after');
 
     const messages = await getMessages('chat-1');
-    expect(messages[0].content).toBe('after');
+    expect(messages[0]?.content).toBe('after');
   });
 
   it('preserves image attachments and allows image-only messages', async () => {
@@ -127,7 +119,7 @@ describe('local db concurrency', () => {
     });
 
     const messages = await getMessages('chat-1');
-    expect(messages[0].attachments).toEqual([
+    expect(messages[0]?.attachments).toEqual([
       {
         type: 'image',
         name: 'image.png',
@@ -169,9 +161,9 @@ describe('local db concurrency', () => {
     });
 
     const messages = await getMessages('chat-1');
-    expect(messages[0].use_web_search).toBe(true);
-    expect(messages[0].search_queries).toEqual(['query']);
-    expect(messages[0].annotations).toEqual([
+    expect(messages[0]?.use_web_search).toBe(true);
+    expect(messages[0]?.search_queries).toEqual(['query']);
+    expect(messages[0]?.annotations).toEqual([
       {
         type: 'url_citation',
         url_citation: {
@@ -219,24 +211,6 @@ describe('local db concurrency', () => {
     expect((await getMessages('chat-2')).map((message) => message.id)).toEqual(['msg-3']);
   });
 
-  it('preserves a corrupt local db snapshot before resetting it', async () => {
-    storage.set('ozyrachat:local-db:v1', '{broken json');
-
-    await createChat({
-      id: 'chat-after-corruption',
-      title: 'Recovered',
-      user_id: 'user-1',
-    });
-
-    const corruptBackupKey = Array.from(storage.keys()).find((key) =>
-      key.startsWith('ozyrachat:local-db:v1:corrupt:')
-    );
-
-    expect(corruptBackupKey).toBeDefined();
-    expect(storage.get(corruptBackupKey ?? '')).toBe('{broken json');
-    expect(storage.get('ozyrachat:local-db:v1')).toContain('chat-after-corruption');
-  });
-
   it('rejects imported message ids that already belong to another chat', async () => {
     await createChat({ id: 'chat-1', title: 'Imported target', user_id: 'user-1' });
     await createChat({ id: 'chat-2', title: 'Other chat', user_id: 'user-1' });
@@ -272,5 +246,150 @@ describe('local db concurrency', () => {
     expect(await getMessages('chat-2')).toEqual([
       expect.objectContaining({ id: 'shared-message-id', content: 'Do not remove me' }),
     ]);
+  });
+});
+
+describe('legacy localStorage migration', () => {
+  const legacyState = {
+    profiles: [{ id: 'user-1', email: 'user@example.com', name: 'User' }],
+    chats: [
+      {
+        id: 'legacy-chat',
+        title: 'Legacy chat',
+        created_at: '2024-01-01T00:00:00.000Z',
+        user_id: 'user-1',
+      },
+    ],
+    messages: [
+      {
+        id: 'legacy-msg',
+        chat_id: 'legacy-chat',
+        role: 'user',
+        content: 'hello from localStorage',
+        timestamp: 1,
+        user_id: 'user-1',
+      },
+    ],
+  };
+
+  const seedExistingDatabase = (chatId: string): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const request = indexedDB.open(LOCAL_DB_NAME, LOCAL_DB_VERSION);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        db.createObjectStore(PROFILES_STORE, { keyPath: 'id' });
+        db.createObjectStore(CHATS_STORE, { keyPath: 'id' });
+        const messages = db.createObjectStore(MESSAGES_STORE, { keyPath: 'id' });
+        messages.createIndex(MESSAGES_BY_CHAT_INDEX, 'chat_id', { unique: false });
+      };
+      request.onsuccess = () => {
+        const db = request.result;
+        const transaction = db.transaction(CHATS_STORE, 'readwrite');
+        transaction.objectStore(CHATS_STORE).put({
+          id: chatId,
+          title: 'Existing chat',
+          created_at: '2024-06-01T00:00:00.000Z',
+          user_id: 'user-1',
+        });
+        transaction.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        transaction.onerror = () => reject(transaction.error);
+      };
+      request.onerror = () => reject(request.error);
+    });
+
+  it('imports the legacy payload on first open and renames the key', async () => {
+    const raw = JSON.stringify(legacyState);
+    window.localStorage.setItem(LEGACY_DB_KEY, raw);
+
+    const chats = await getChats('user-1');
+    expect(chats.map((chat) => chat.id)).toEqual(['legacy-chat']);
+
+    const messages = await getMessages('legacy-chat');
+    expect(messages).toEqual([expect.objectContaining({ id: 'legacy-msg' })]);
+
+    const profile = await getProfile('user-1');
+    expect(profile).toEqual(expect.objectContaining({ id: 'user-1', name: 'User' }));
+
+    expect(window.localStorage.getItem(LEGACY_DB_KEY)).toBeNull();
+    expect(window.localStorage.getItem(MIGRATED_DB_KEY)).toBe(raw);
+  });
+
+  it('keeps the safety-net copy intact while later writes go to IndexedDB', async () => {
+    window.localStorage.setItem(LEGACY_DB_KEY, JSON.stringify(legacyState));
+
+    await updateMessageContent('legacy-msg', 'edited after migration');
+
+    const messages = await getMessages('legacy-chat');
+    expect(messages[0]?.content).toBe('edited after migration');
+    expect(window.localStorage.getItem(MIGRATED_DB_KEY)).toContain('hello from localStorage');
+  });
+
+  it('skips the import when the database already contains data', async () => {
+    await seedExistingDatabase('existing-chat');
+    const raw = JSON.stringify(legacyState);
+    window.localStorage.setItem(LEGACY_DB_KEY, raw);
+
+    const chats = await getChats('user-1');
+    expect(chats.map((chat) => chat.id)).toEqual(['existing-chat']);
+
+    expect(window.localStorage.getItem(LEGACY_DB_KEY)).toBeNull();
+    expect(window.localStorage.getItem(MIGRATED_DB_KEY)).toBe(raw);
+  });
+
+  it('preserves a corrupt legacy payload before resetting it', async () => {
+    window.localStorage.setItem(LEGACY_DB_KEY, '{broken json');
+
+    await createChat({
+      id: 'chat-after-corruption',
+      title: 'Recovered',
+      user_id: 'user-1',
+    });
+
+    const corruptBackupKey = Array.from({ length: window.localStorage.length }, (_, index) =>
+      window.localStorage.key(index)
+    ).find((key) => key?.startsWith(`${LEGACY_DB_KEY}:corrupt:`));
+
+    expect(corruptBackupKey).toBeDefined();
+    expect(window.localStorage.getItem(corruptBackupKey ?? '')).toBe('{broken json');
+    expect(window.localStorage.getItem(LEGACY_DB_KEY)).toBeNull();
+    expect(window.localStorage.getItem(MIGRATED_DB_KEY)).toBeNull();
+
+    const chats = await getChats('user-1');
+    expect(chats.map((chat) => chat.id)).toEqual(['chat-after-corruption']);
+  });
+});
+
+describe('environments without IndexedDB', () => {
+  const removeIndexedDb = (): void => {
+    Object.defineProperty(window, 'indexedDB', {
+      configurable: true,
+      value: undefined,
+    });
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: undefined,
+    });
+  };
+
+  it('degrades gracefully to empty reads and explicit write failures', async () => {
+    removeIndexedDb();
+
+    await expect(
+      createChat({ id: 'chat-1', title: 'Ephemeral', user_id: 'user-1' })
+    ).rejects.toBeInstanceOf(DbUnavailableError);
+
+    expect(await getChats('user-1')).toEqual([]);
+    expect(await getMessages('chat-1')).toEqual([]);
+    expect(await getProfile('user-1')).toBeNull();
+
+    await expect(incrementMessageUsage('user-1', 'standard')).rejects.toBeInstanceOf(
+      DbUnavailableError
+    );
+    await expect(upsertProfile({ id: 'user-1', email: '' })).rejects.toBeInstanceOf(
+      DbUnavailableError
+    );
   });
 });

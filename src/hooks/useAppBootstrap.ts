@@ -15,6 +15,7 @@ import {
   getValidModelId,
 } from '../config/models';
 import { CHAT_CONFIG } from '../config/constants';
+import { t } from '../i18n';
 import type { Chat } from '../types';
 import {
   getProfile,
@@ -26,42 +27,56 @@ import {
 } from '../utils/db';
 import { migrateLocalChatsToDatabase, loadChatsFromDatabase } from '../utils/chatMigration';
 import { parseStoredChats } from '../utils/typeGuards';
+import {
+  readLocalStorage,
+  readLocalStorageJson,
+  removeLocalStorage,
+  writeLocalStorage,
+  writeLocalStorageJson,
+} from '../utils/browserStorage';
+import { logger } from '../utils/logger';
 
 const LOCAL_USER_ID = 'local-user';
 const ENABLED_MODEL_IDS_KEY = 'ozyra:enabled-model-ids:v2';
 
 const readLocalChats = (): Chat[] => {
+  const savedChats = readLocalStorage('chats');
+  if (!savedChats) {
+    return [];
+  }
   try {
-    const savedChats = localStorage.getItem('chats');
-    if (!savedChats) {
-      return [];
-    }
     return parseStoredChats(JSON.parse(savedChats) as unknown).map((chat) => ({
       ...chat,
       isPinned: chat.isPinned ?? false,
       model: getValidModelId(chat.model),
     }));
   } catch (error) {
-    console.error('[Bootstrap] Error parsing saved chats:', error);
-    localStorage.removeItem('chats');
-    localStorage.removeItem('lastActiveChatId');
+    logger.error('[Bootstrap] Error parsing saved chats:', error);
+    // Preservar el payload corrupto para diagnóstico en lugar de borrarlo.
+    try {
+      writeLocalStorage(`chats:corrupt:${Date.now()}`, savedChats);
+    } catch {
+      // Best-effort: si el storage falla, se continúa con historial vacío.
+    }
+    removeLocalStorage('chats');
+    removeLocalStorage('lastActiveChatId');
+    toast.error(t('corruptHistoryArchived'));
     return [];
   }
 };
 
 const getInitialSelectedModel = (): string => {
-  const savedSelectedModel = localStorage.getItem('selectedModel');
+  const savedSelectedModel = readLocalStorage('selectedModel');
   return savedSelectedModel ? getValidModelId(savedSelectedModel) : DEFAULT_MODEL_ID;
 };
 
 const getInitialEnabledModelIdsFromStorage = (): string[] => {
   const availableIds = new Set(availableModels.map((model) => model.id));
   const readIds = (key: string, maxItems?: number): string[] | null => {
-    const saved = localStorage.getItem(key);
-    if (saved === null) {
+    const parsed = readLocalStorageJson<unknown>(key);
+    if (parsed === null) {
       return null;
     }
-    const parsed = JSON.parse(saved) as unknown;
     if (!Array.isArray(parsed) || (maxItems !== undefined && parsed.length > maxItems)) {
       return null;
     }
@@ -76,7 +91,7 @@ const getInitialEnabledModelIdsFromStorage = (): string[] => {
     const legacyIds = readIds('enabledModelIds', 40);
     return legacyIds && legacyIds.length > 0 ? legacyIds : getInitialEnabledModelIds();
   } catch (error) {
-    console.error('[Bootstrap] Error parsing enabled models:', error);
+    logger.error('[Bootstrap] Error parsing enabled models:', error);
     return getInitialEnabledModelIds();
   }
 };
@@ -147,13 +162,13 @@ export function useAppBootstrap({
 
   const setSelectedModel = useCallback((model: string) => {
     setSelectedModelState(model);
-    localStorage.setItem('selectedModel', model);
+    writeLocalStorage('selectedModel', model);
   }, []);
 
   const setEnabledModelIds = useCallback<Dispatch<SetStateAction<string[]>>>((action) => {
     setEnabledModelIdsState((current) => {
       const next = typeof action === 'function' ? action(current) : action;
-      localStorage.setItem(ENABLED_MODEL_IDS_KEY, JSON.stringify(next));
+      writeLocalStorageJson(ENABLED_MODEL_IDS_KEY, next);
       return next;
     });
   }, []);
@@ -163,7 +178,7 @@ export function useAppBootstrap({
       setModelCatalogVersion((version) => version + 1);
       setSelectedModelState((current) => {
         const next = getValidModelId(current);
-        localStorage.setItem('selectedModel', next);
+        writeLocalStorage('selectedModel', next);
         return next;
       });
       setEnabledModelIds((current) => {
@@ -192,10 +207,10 @@ export function useAppBootstrap({
           await upsertProfile({
             id: LOCAL_USER_ID,
             email: '',
-            name: localStorage.getItem('userName') || 'Perfil local',
-            knowledge: localStorage.getItem('userKnowledge') || '',
-            traits: localStorage.getItem('userTraits') || '',
-            additionalInfo: localStorage.getItem('userAdditionalInfo') || '',
+            name: readLocalStorage('userName') || 'Perfil local',
+            knowledge: readLocalStorage('userKnowledge') || '',
+            traits: readLocalStorage('userTraits') || '',
+            additionalInfo: readLocalStorage('userAdditionalInfo') || '',
             has_local_access: true,
           });
           updateUsageFromProfile(0, 0);
@@ -224,7 +239,7 @@ export function useAppBootstrap({
           hydrateLocalChats();
         }
       } catch (error) {
-        console.error('[Bootstrap] Error loading local state:', error);
+        logger.error('[Bootstrap] Error loading local state:', error);
         hydrateLocalChats();
       } finally {
         setIsLocalProfileLoading(false);
@@ -239,10 +254,10 @@ export function useAppBootstrap({
       await deleteAllChatsForUser(LOCAL_USER_ID);
       setChats([]);
       setCurrentChat(null);
-      localStorage.removeItem('chats');
-      localStorage.removeItem('lastActiveChatId');
+      removeLocalStorage('chats');
+      removeLocalStorage('lastActiveChatId');
     } catch (error) {
-      console.error('[Bootstrap] Error deleting all chats:', error);
+      logger.error('[Bootstrap] Error deleting all chats:', error);
       throw error;
     }
   }, []);
@@ -258,7 +273,7 @@ export function useAppBootstrap({
       try {
         await deleteChatRecord(chatId);
       } catch (error) {
-        console.error('[Bootstrap] Error deleting chat from local history:', error);
+        logger.error('[Bootstrap] Error deleting chat from local history:', error);
         throw error;
       }
     }
@@ -268,7 +283,7 @@ export function useAppBootstrap({
       const remaining = chatsRef.current
         .filter((c) => c.id !== chatId)
         .sort((a, b) => b.createdAt - a.createdAt);
-      setCurrentChat(remaining.length > 0 ? remaining[0] : null);
+      setCurrentChat(remaining[0] ?? null);
     }
   }, []);
 
@@ -282,7 +297,7 @@ export function useAppBootstrap({
 
     const pinnedCount = chatsRef.current.filter((c) => c.isPinned).length;
     if (newPinned && pinnedCount >= CHAT_CONFIG.MAX_PINNED_CHATS) {
-      toast.error(`Puedes fijar un máximo de ${CHAT_CONFIG.MAX_PINNED_CHATS} chats.`);
+      toast.error(t('maxPinnedChats', { max: CHAT_CONFIG.MAX_PINNED_CHATS }));
       return;
     }
 

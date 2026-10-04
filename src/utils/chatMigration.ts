@@ -10,6 +10,9 @@ import {
   getChats as getChatsDb,
   getMessages as getMessagesDb,
 } from './db';
+import { readLocalStorage, removeLocalStorage, writeLocalStorage } from './browserStorage';
+import { generateId } from './id';
+import { logger } from './logger';
 
 const toCreatedAtIso = (createdAt: number | undefined): string | undefined => {
   if (!createdAt || Number.isNaN(createdAt)) {
@@ -27,23 +30,23 @@ export async function migrateLocalChatsToDatabase(
   localChats: ChatType[]
 ): Promise<{ success: boolean; migratedCount: number }> {
   const migrationKey = `migrated_chats_${userId}`;
-  const alreadyMigrated = localStorage.getItem(migrationKey);
+  const alreadyMigrated = readLocalStorage(migrationKey);
   const existingChats = await getChatsDb(userId);
   const existingChatIds = new Set(existingChats.map((chat) => chat.id));
 
   if (alreadyMigrated && localChats.every((chat) => existingChatIds.has(chat.id))) {
-    console.info('[Migration] Chats already reconciled for this user, skipping');
-    localStorage.removeItem('chats');
+    logger.info('[Migration] Chats already reconciled for this user, skipping');
+    removeLocalStorage('chats');
     return { success: true, migratedCount: 0 };
   }
 
   if (localChats.length === 0) {
-    localStorage.setItem(migrationKey, 'true');
-    localStorage.removeItem('chats');
+    writeLocalStorage(migrationKey, 'true');
+    removeLocalStorage('chats');
     return { success: true, migratedCount: 0 };
   }
 
-  console.info(`[Migration] Reconciling ${localChats.length} local chats`);
+  logger.info(`[Migration] Reconciling ${localChats.length} local chats`);
   const claimedChatIds = new Set(existingChatIds);
   const migrationResults = await Promise.all(
     localChats.map(async (chat) => {
@@ -71,11 +74,10 @@ export async function migrateLocalChatsToDatabase(
 
         await Promise.all(
           chat.messages.map(async (message) => {
-            const messageId =
-              message.id && message.id.trim() !== '' ? message.id : crypto.randomUUID();
+            const messageId = message.id && message.id.trim() !== '' ? message.id : generateId();
 
             if (existingMessageIds.has(messageId)) {
-              console.info(`[Migration] Skipping existing message: ${messageId}`);
+              logger.info(`[Migration] Skipping existing message: ${messageId}`);
               return;
             }
 
@@ -97,18 +99,18 @@ export async function migrateLocalChatsToDatabase(
                 attachments: message.attachments,
                 user_id: userId,
               });
-              console.info(`[Migration] Reconciled message: ${messageId}`);
+              logger.info(`[Migration] Reconciled message: ${messageId}`);
             } catch (messageError: unknown) {
               failed = true;
-              console.error('Error migrando mensaje local:', messageError);
+              logger.error('Error migrando mensaje local:', messageError);
             }
           })
         );
 
-        console.info(`[Migration] Successfully reconciled chat: ${chat.id}`);
+        logger.info(`[Migration] Successfully reconciled chat: ${chat.id}`);
       } catch (chatError: unknown) {
         failed = true;
-        console.error('Error migrando chat local:', chatError);
+        logger.error('Error migrando chat local:', chatError);
       }
 
       return { migratedCount, failed };
@@ -118,14 +120,14 @@ export async function migrateLocalChatsToDatabase(
   const hasFailures = migrationResults.some((result) => result.failed);
 
   if (hasFailures) {
-    console.warn('[Migration] Migration finished with errors; keeping legacy chats for retry');
+    logger.warn('[Migration] Migration finished with errors; keeping legacy chats for retry');
     return { success: false, migratedCount };
   }
 
   // Mark migration as completed
-  localStorage.setItem(migrationKey, 'true');
-  localStorage.removeItem('chats');
-  console.info('[Migration] Migration completed successfully');
+  writeLocalStorage(migrationKey, 'true');
+  removeLocalStorage('chats');
+  logger.info('[Migration] Migration completed successfully');
 
   return { success: true, migratedCount };
 }

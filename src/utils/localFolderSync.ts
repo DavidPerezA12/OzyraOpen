@@ -1,4 +1,7 @@
+import { t } from '../i18n';
 import { STORAGE_KEYS } from '../config/constants';
+import { forEachLocalStorageEntry } from './browserStorage';
+import { LEGACY_DB_KEY, exportLocalDbState } from './localDbStore';
 
 type SerializableValue =
   | string
@@ -54,6 +57,13 @@ const shouldIncludeStorageKey = (key: string): boolean => {
     return false;
   }
 
+  // Internal safety-net copies of the legacy database (":migrated" and
+  // ":corrupt:*") stay in localStorage only; the snapshot carries the live
+  // IndexedDB state under the canonical key instead.
+  if (key.startsWith(`${LEGACY_DB_KEY}:`)) {
+    return false;
+  }
+
   return SAFE_KEYS.has(key) || SAFE_KEY_PREFIXES.some((prefix) => key.startsWith(prefix));
 };
 
@@ -69,7 +79,7 @@ const openHandleDb = (): Promise<IDBDatabase> => {
       request.result.createObjectStore(HANDLE_STORE_NAME);
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error('No se pudo abrir IndexedDB'));
+    request.onerror = () => reject(request.error ?? new Error(t('folderIdbOpenError')));
   });
 };
 
@@ -84,7 +94,7 @@ export const saveLocalSyncDirectoryHandle = async (
       transaction.objectStore(HANDLE_STORE_NAME).put(directoryHandle, DIRECTORY_HANDLE_KEY);
       transaction.oncomplete = () => resolve();
       transaction.onerror = () =>
-        reject(transaction.error ?? new Error('No se pudo guardar la carpeta elegida'));
+        reject(transaction.error ?? new Error(t('folderHandleSaveError')));
     });
   } finally {
     db.close();
@@ -103,8 +113,7 @@ export const loadLocalSyncDirectoryHandle = async (): Promise<FileSystemDirector
       const transaction = db.transaction(HANDLE_STORE_NAME, 'readonly');
       const request = transaction.objectStore(HANDLE_STORE_NAME).get(DIRECTORY_HANDLE_KEY);
       request.onsuccess = () => resolve((request.result as FileSystemDirectoryHandle) ?? null);
-      request.onerror = () =>
-        reject(request.error ?? new Error('No se pudo cargar la carpeta elegida'));
+      request.onerror = () => reject(request.error ?? new Error(t('folderHandleLoadError')));
     });
   } finally {
     db.close();
@@ -122,7 +131,7 @@ const ensureReadWritePermission = async (
 
   const nextPermission = await directoryHandle.requestPermission(options);
   if (nextPermission !== 'granted') {
-    throw new Error('Permiso denegado para escribir en la carpeta elegida.');
+    throw new Error(t('folderPermissionDenied'));
   }
 };
 
@@ -142,28 +151,59 @@ const writeLocalFolderSnapshotIfPermitted = async (): Promise<boolean> => {
 };
 
 let automaticSnapshotQueue: Promise<boolean> = Promise.resolve(false);
+let lastAutomaticSnapshotStart = 0;
+let trailingSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
 
-export const queueLocalFolderSnapshotIfPermitted = (): Promise<boolean> => {
+/** Ventana de coalescado: durante el streaming hay decenas de escrituras/seg. */
+const AUTOMATIC_SNAPSHOT_THROTTLE_MS = 3000;
+
+const runAutomaticSnapshot = (): Promise<boolean> => {
+  lastAutomaticSnapshotStart = Date.now();
   const nextSnapshot = automaticSnapshotQueue.then(() => writeLocalFolderSnapshotIfPermitted());
   automaticSnapshotQueue = nextSnapshot.catch(() => false);
   return nextSnapshot;
 };
 
-const createLocalFolderSnapshot = (): LocalFolderSnapshot => {
+const scheduleTrailingSnapshot = (): void => {
+  if (trailingSnapshotTimer) {
+    return;
+  }
+  const wait = Math.max(
+    0,
+    AUTOMATIC_SNAPSHOT_THROTTLE_MS - (Date.now() - lastAutomaticSnapshotStart)
+  );
+  trailingSnapshotTimer = setTimeout(() => {
+    trailingSnapshotTimer = null;
+    void runAutomaticSnapshot();
+  }, wait);
+};
+
+export const queueLocalFolderSnapshotIfPermitted = (): Promise<boolean> => {
+  if (Date.now() - lastAutomaticSnapshotStart < AUTOMATIC_SNAPSHOT_THROTTLE_MS) {
+    // Ráfaga de escrituras (p. ej. streaming): coalescar en un único snapshot
+    // diferido en lugar de exportar la DB completa en cada escritura.
+    scheduleTrailingSnapshot();
+    return automaticSnapshotQueue;
+  }
+  return runAutomaticSnapshot();
+};
+
+const createLocalFolderSnapshot = async (): Promise<LocalFolderSnapshot> => {
   const storage: Record<string, SerializableValue> = {};
 
-  if (typeof window !== 'undefined') {
-    for (let i = 0; i < localStorage.length; i += 1) {
-      const key = localStorage.key(i);
-      if (!key || !shouldIncludeStorageKey(key)) {
-        continue;
-      }
-
-      const value = localStorage.getItem(key);
-      if (value !== null) {
-        storage[key] = parseStorageValue(value);
-      }
+  forEachLocalStorageEntry((key, value) => {
+    if (shouldIncludeStorageKey(key)) {
+      storage[key] = parseStorageValue(value);
     }
+  });
+
+  // Chats, messages and profiles live in IndexedDB; export them under the
+  // canonical key so existing snapshot import paths keep working. When the
+  // database is unavailable, keep whatever localStorage still holds (e.g. the
+  // legacy payload before migration).
+  const dbState = await exportLocalDbState();
+  if (dbState) {
+    storage[LEGACY_DB_KEY] = dbState as unknown as SerializableValue;
   }
 
   return {
@@ -177,7 +217,7 @@ const createLocalFolderSnapshot = (): LocalFolderSnapshot => {
 
 export const pickLocalSyncDirectory = async (): Promise<FileSystemDirectoryHandle> => {
   if (!isLocalFolderSyncSupported()) {
-    throw new Error('Tu navegador no permite elegir carpetas locales desde una web.');
+    throw new Error(t('folderPickUnsupported'));
   }
 
   return window.showDirectoryPicker({ mode: 'readwrite' });
@@ -188,7 +228,7 @@ export const writeLocalFolderSnapshot = async (
 ): Promise<{ fileName: string; exportedAt: string }> => {
   await ensureReadWritePermission(directoryHandle);
 
-  const snapshot = createLocalFolderSnapshot();
+  const snapshot = await createLocalFolderSnapshot();
   const fileName = 'ozyrachat-data.json';
   const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
   const writable = await fileHandle.createWritable();

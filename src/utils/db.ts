@@ -2,11 +2,24 @@
  * Local database utilities.
  *
  * These functions preserve the public data API the app already uses, while
- * storing everything in browser localStorage. No remote database is required.
+ * storing everything in IndexedDB (separate object stores for profiles,
+ * chats and messages). No remote database is required. Data stored by the
+ * previous localStorage implementation is migrated on first open (see
+ * `localDbStore.ts`).
  */
 
 import { queueLocalFolderSnapshotIfPermitted } from './localFolderSync';
 import type { MessageAnnotation, MessageAttachment } from '../types';
+import {
+  CHATS_STORE,
+  MESSAGES_BY_CHAT_INDEX,
+  MESSAGES_STORE,
+  PROFILES_STORE,
+  getLocalDbConnection,
+  requestToPromise,
+  runTransaction,
+} from './localDbStore';
+import { logger } from './logger';
 
 export interface Profile {
   readonly id: string;
@@ -55,103 +68,67 @@ interface UsageStats {
   readonly premium_message_usage: number;
 }
 
-interface LocalDbState {
-  readonly profiles: Profile[];
-  readonly chats: ChatRecord[];
-  readonly messages: MessageRecord[];
+const queueSnapshotAfterWrite = (): void => {
+  void queueLocalFolderSnapshotIfPermitted().catch((error) => {
+    logger.warn('[LocalDB] Failed to update local folder snapshot', { detail: error });
+  });
+};
+
+/**
+ * Runs a read-only transaction. When IndexedDB is unavailable (SSR, tests
+ * without a fake, restricted contexts) the `fallback` result is returned,
+ * mirroring how the previous implementation behaved without localStorage.
+ */
+const readTransaction = async <T>(
+  storeNames: string | string[],
+  fallback: () => T,
+  operation: (transaction: IDBTransaction) => Promise<T>
+): Promise<T> => {
+  const db = await getLocalDbConnection();
+  if (!db) {
+    return fallback();
+  }
+  return runTransaction(db, storeNames, 'readonly', operation);
+};
+
+/**
+ * Error lanzado cuando IndexedDB no está disponible y se intenta escribir.
+ *
+ * Antes las escrituras devolvían un "éxito" falso (fallback en memoria) que se
+ * perdía silenciosamente. Ahora fallan de forma explícita para que los
+ * llamadores muestren el error en lugar de perder datos.
+ */
+export class DbUnavailableError extends Error {
+  constructor(operation = 'database operation') {
+    super(`Local database unavailable during ${operation}`);
+    this.name = 'DbUnavailableError';
+  }
 }
 
-const DB_KEY = 'ozyrachat:local-db:v1';
-
-const emptyDb = (): LocalDbState => ({
-  profiles: [],
-  chats: [],
-  messages: [],
-});
-
-const getStorage = (): Storage | null => {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-};
-
-const preserveCorruptDbSnapshot = (storage: Storage, raw: string): void => {
-  try {
-    storage.setItem(`${DB_KEY}:corrupt:${Date.now()}`, raw);
-  } catch {
-    // Best-effort recovery only. If storage is unavailable/full, reset below.
-  }
-};
-
-const readDb = (): LocalDbState => {
-  const storage = getStorage();
-  if (!storage) {
-    return emptyDb();
-  }
-  const raw = storage.getItem(DB_KEY);
-  if (!raw) {
-    return emptyDb();
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<LocalDbState>;
-    return {
-      profiles: Array.isArray(parsed.profiles) ? parsed.profiles : [],
-      chats: Array.isArray(parsed.chats) ? parsed.chats : [],
-      messages: Array.isArray(parsed.messages) ? parsed.messages : [],
-    };
-  } catch (error) {
-    console.error('[LocalDB] Failed to read local database', error);
-    preserveCorruptDbSnapshot(storage, raw);
-    storage.removeItem(DB_KEY);
-    return emptyDb();
-  }
-};
-
-const writeDb = (db: LocalDbState): void => {
-  const storage = getStorage();
-  if (!storage) {
-    return;
-  }
-  storage.setItem(DB_KEY, JSON.stringify(db));
-  void queueLocalFolderSnapshotIfPermitted().catch((error) => {
-    console.warn('[LocalDB] Failed to update local folder snapshot', error);
-  });
-};
-
-let dbWriteQueue: Promise<unknown> = Promise.resolve();
-
-const waitForPendingWrites = async (): Promise<void> => {
-  try {
-    await dbWriteQueue;
-  } catch {
-    // The caller that scheduled the write receives the real error. Readers
-    // should still continue with the latest state available in storage.
-  }
-};
-
-const readConsistentDb = async (): Promise<LocalDbState> => {
-  await waitForPendingWrites();
-  return readDb();
-};
-
-const mutateDb = async <T>(
-  operation: (db: LocalDbState) => { db: LocalDbState; result: T }
+/**
+ * Runs a read-write transaction and queues a local folder snapshot after the
+ * transaction commits, like the previous implementation did on every write.
+ *
+ * Unlike reads, writes never fall back: if the database is unavailable an
+ * explicit {@link DbUnavailableError} is thrown so callers surface the
+ * failure instead of silently discarding the write.
+ */
+const writeTransaction = async <T>(
+  storeNames: string | string[],
+  operation: (transaction: IDBTransaction) => Promise<T>,
+  operationName = 'write'
 ): Promise<T> => {
-  const run = dbWriteQueue.then(() => {
-    const { db, result } = operation(readDb());
-    writeDb(db);
-    return result;
-  });
-
-  dbWriteQueue = run.catch(() => undefined);
-  return run;
+  const db = await getLocalDbConnection();
+  if (!db) {
+    throw new DbUnavailableError(operationName);
+  }
+  const result = await runTransaction(db, storeNames, 'readwrite', operation);
+  queueSnapshotAfterWrite();
+  return result;
 };
+
+const getRecord = <T>(store: IDBObjectStore, key: string): Promise<T | undefined> =>
+  requestToPromise(store.get(key) as IDBRequest<T | undefined>);
 
 const validateRequired = (params: Record<string, unknown>, operation: string): void => {
   const missing = Object.entries(params).flatMap(([key, value]) =>
@@ -163,7 +140,7 @@ const validateRequired = (params: Record<string, unknown>, operation: string): v
   }
 };
 
-const todayIsoDate = (): string => new Date().toISOString().split('T')[0];
+const todayIsoDate = (): string => new Date().toISOString().split('T')[0] ?? '';
 
 const normalizeProfile = (profile: Profile): Profile => ({
   ...profile,
@@ -174,103 +151,149 @@ const normalizeProfile = (profile: Profile): Profile => ({
   last_usage_reset_date: profile.last_usage_reset_date ?? todayIsoDate(),
 });
 
-const upsertProfileInState = (db: LocalDbState, profile: Profile): LocalDbState => {
-  const normalized = normalizeProfile(profile);
-  const exists = db.profiles.some((item) => item.id === normalized.id);
-  return {
-    ...db,
-    profiles: exists
-      ? db.profiles.map((item) =>
-          item.id === normalized.id ? normalizeProfile({ ...item, ...profile }) : item
-        )
-      : [...db.profiles, normalized],
-  };
+type ChatInput = Omit<ChatRecord, 'created_at'> & { readonly created_at?: string };
+
+const buildChatRecord = (chat: ChatInput, existing?: ChatRecord): ChatRecord => ({
+  ...chat,
+  created_at: chat.created_at ?? existing?.created_at ?? new Date().toISOString(),
+  is_pinned: chat.is_pinned ?? false,
+});
+
+const buildMessageRecord = (message: MessageRecord): MessageRecord => ({
+  ...message,
+  search_queries: message.search_queries ? [...message.search_queries] : undefined,
+  annotations: message.annotations?.map((annotation) => ({
+    ...annotation,
+    url_citation: { ...annotation.url_citation },
+  })),
+  attachments: message.attachments?.map((attachment) => ({ ...attachment })),
+  is_complete: message.is_complete ?? true,
+});
+
+const deleteMessagesForChat = async (
+  transaction: IDBTransaction,
+  chatId: string
+): Promise<void> => {
+  const store = transaction.objectStore(MESSAGES_STORE);
+  const keys = await requestToPromise(store.index(MESSAGES_BY_CHAT_INDEX).getAllKeys(chatId));
+  await Promise.all(keys.map((key) => requestToPromise(store.delete(key))));
 };
 
 export async function getProfile(userId: string): Promise<Profile | null> {
   validateRequired({ userId }, 'getProfile');
-  const profile = (await readConsistentDb()).profiles.find((item) => item.id === userId);
-  return profile ? normalizeProfile(profile) : null;
+  return readTransaction<Profile | null>(
+    PROFILES_STORE,
+    () => null,
+    async (transaction) => {
+      const profile = await getRecord<Profile>(transaction.objectStore(PROFILES_STORE), userId);
+      return profile ? normalizeProfile(profile) : null;
+    }
+  );
 }
 
 export async function upsertProfile(profile: Profile): Promise<Profile> {
   validateRequired({ id: profile.id }, 'upsertProfile');
-  return mutateDb((db) => {
-    const nextDb = upsertProfileInState(db, profile);
-    const saved = nextDb.profiles.find((item) => item.id === profile.id);
-    return { db: nextDb, result: normalizeProfile(saved ?? profile) };
-  });
+  return writeTransaction<Profile>(
+    PROFILES_STORE,
+    async (transaction) => {
+      const store = transaction.objectStore(PROFILES_STORE);
+      const existing = await getRecord<Profile>(store, profile.id);
+      const saved = normalizeProfile(existing ? { ...existing, ...profile } : profile);
+      await requestToPromise(store.put(saved));
+      return saved;
+    },
+    'upsertProfile'
+  );
 }
 
 export async function getChats(userId: string): Promise<ChatRecord[]> {
   validateRequired({ userId }, 'getChats');
-  return (await readConsistentDb()).chats
-    .filter((chat) => chat.user_id === userId)
-    .sort((a, b) => {
-      const pinnedDelta = Number(b.is_pinned ?? false) - Number(a.is_pinned ?? false);
-      if (pinnedDelta !== 0) {
-        return pinnedDelta;
-      }
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    });
+  return readTransaction<ChatRecord[]>(
+    CHATS_STORE,
+    () => [],
+    async (transaction) => {
+      const chats = await requestToPromise(
+        transaction.objectStore(CHATS_STORE).getAll() as IDBRequest<ChatRecord[]>
+      );
+      return chats
+        .filter((chat) => chat.user_id === userId)
+        .sort((a, b) => {
+          const pinnedDelta = Number(b.is_pinned ?? false) - Number(a.is_pinned ?? false);
+          if (pinnedDelta !== 0) {
+            return pinnedDelta;
+          }
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        });
+    }
+  );
 }
 
-export async function createChat(
-  chat: Omit<ChatRecord, 'created_at'> & { readonly created_at?: string }
-): Promise<ChatRecord> {
+export async function createChat(chat: ChatInput): Promise<ChatRecord> {
   validateRequired({ id: chat.id, title: chat.title, user_id: chat.user_id }, 'createChat');
-  return mutateDb((db) => {
-    const existing = db.chats.find((item) => item.id === chat.id);
-    if (existing) {
-      return { db, result: existing };
-    }
-
-    const record: ChatRecord = {
-      ...chat,
-      created_at: chat.created_at ?? new Date().toISOString(),
-      is_pinned: chat.is_pinned ?? false,
-    };
-    return { db: { ...db, chats: [record, ...db.chats] }, result: record };
-  });
+  return writeTransaction<ChatRecord>(
+    CHATS_STORE,
+    async (transaction) => {
+      const store = transaction.objectStore(CHATS_STORE);
+      const existing = await getRecord<ChatRecord>(store, chat.id);
+      if (existing) {
+        return existing;
+      }
+      const record = buildChatRecord(chat);
+      await requestToPromise(store.add(record));
+      return record;
+    },
+    'createChat'
+  );
 }
 
 export async function deleteChatRecord(chatId: string): Promise<void> {
   validateRequired({ chatId }, 'deleteChatRecord');
-  await mutateDb((db) => ({
-    db: {
-      ...db,
-      chats: db.chats.filter((chat) => chat.id !== chatId),
-      messages: db.messages.filter((message) => message.chat_id !== chatId),
+  await writeTransaction<void>(
+    [CHATS_STORE, MESSAGES_STORE],
+    async (transaction) => {
+      await Promise.all([
+        requestToPromise(transaction.objectStore(CHATS_STORE).delete(chatId)),
+        deleteMessagesForChat(transaction, chatId),
+      ]);
     },
-    result: undefined,
-  }));
+    'deleteChatRecord'
+  );
 }
 
 export async function deleteAllChatsForUser(userId: string): Promise<void> {
   validateRequired({ userId }, 'deleteAllChatsForUser');
-  await mutateDb((db) => {
-    const chatIds = new Set<string>();
-    for (const chat of db.chats) {
-      if (chat.user_id === userId) {
-        chatIds.add(chat.id);
-      }
-    }
-    return {
-      db: {
-        ...db,
-        chats: db.chats.filter((chat) => chat.user_id !== userId),
-        messages: db.messages.filter((message) => !chatIds.has(message.chat_id)),
-      },
-      result: undefined,
-    };
-  });
+  await writeTransaction<void>(
+    [CHATS_STORE, MESSAGES_STORE],
+    async (transaction) => {
+      const chatsStore = transaction.objectStore(CHATS_STORE);
+      const chats = await requestToPromise(chatsStore.getAll() as IDBRequest<ChatRecord[]>);
+      const ownedChats = chats.filter((chat) => chat.user_id === userId);
+      await Promise.all(
+        ownedChats.flatMap((chat) => [
+          requestToPromise(chatsStore.delete(chat.id)),
+          deleteMessagesForChat(transaction, chat.id),
+        ])
+      );
+    },
+    'deleteAllChatsForUser'
+  );
 }
 
 export async function getMessages(chatId: string): Promise<MessageRecord[]> {
   validateRequired({ chatId }, 'getMessages');
-  return (await readConsistentDb()).messages
-    .filter((message) => message.chat_id === chatId)
-    .sort((a, b) => a.timestamp - b.timestamp);
+  return readTransaction<MessageRecord[]>(
+    MESSAGES_STORE,
+    () => [],
+    async (transaction) => {
+      const messages = await requestToPromise(
+        transaction
+          .objectStore(MESSAGES_STORE)
+          .index(MESSAGES_BY_CHAT_INDEX)
+          .getAll(chatId) as IDBRequest<MessageRecord[]>
+      );
+      return messages.sort((a, b) => a.timestamp - b.timestamp);
+    }
+  );
 }
 
 export async function createMessage(message: MessageRecord): Promise<MessageRecord> {
@@ -293,27 +316,24 @@ export async function createMessage(message: MessageRecord): Promise<MessageReco
     throw new Error('Message content or attachments are required');
   }
 
-  return mutateDb((db) => {
-    const existing = db.messages.find((item) => item.id === message.id);
-    if (existing) {
-      return { db, result: existing };
-    }
-    const record: MessageRecord = {
-      ...message,
-      search_queries: message.search_queries ? [...message.search_queries] : undefined,
-      annotations: message.annotations?.map((annotation) => ({
-        ...annotation,
-        url_citation: { ...annotation.url_citation },
-      })),
-      attachments: message.attachments?.map((attachment) => ({ ...attachment })),
-      is_complete: message.is_complete ?? true,
-    };
-    return { db: { ...db, messages: [...db.messages, record] }, result: record };
-  });
+  return writeTransaction<MessageRecord>(
+    MESSAGES_STORE,
+    async (transaction) => {
+      const store = transaction.objectStore(MESSAGES_STORE);
+      const existing = await getRecord<MessageRecord>(store, message.id);
+      if (existing) {
+        return existing;
+      }
+      const record = buildMessageRecord(message);
+      await requestToPromise(store.add(record));
+      return record;
+    },
+    'createMessage'
+  );
 }
 
 export async function replaceChatWithMessages(
-  chat: Omit<ChatRecord, 'created_at'> & { readonly created_at?: string },
+  chat: ChatInput,
   messages: readonly MessageRecord[]
 ): Promise<ChatRecord> {
   validateRequired(
@@ -345,45 +365,35 @@ export async function replaceChatWithMessages(
     messageIds.add(message.id);
   }
 
-  return mutateDb((db) => {
-    const conflictingMessage = db.messages.find(
-      (message) => message.chat_id !== chat.id && messageIds.has(message.id)
-    );
-    if (conflictingMessage) {
-      throw new Error(
-        `Imported message id already exists in another chat: ${conflictingMessage.id}`
+  return writeTransaction<ChatRecord>(
+    [CHATS_STORE, MESSAGES_STORE],
+    async (transaction) => {
+      const chatsStore = transaction.objectStore(CHATS_STORE);
+      const messagesStore = transaction.objectStore(MESSAGES_STORE);
+
+      const storedMessages = await Promise.all(
+        messages.map((message) => getRecord<MessageRecord>(messagesStore, message.id))
       );
-    }
+      const conflictingMessage = storedMessages.find(
+        (stored) => stored !== undefined && stored.chat_id !== chat.id
+      );
+      if (conflictingMessage) {
+        throw new Error(
+          `Imported message id already exists in another chat: ${conflictingMessage.id}`
+        );
+      }
 
-    const existing = db.chats.find((item) => item.id === chat.id);
-    const record: ChatRecord = {
-      ...chat,
-      created_at: chat.created_at ?? existing?.created_at ?? new Date().toISOString(),
-      is_pinned: chat.is_pinned ?? false,
-    };
-    const importedMessages = messages.map((message) => ({
-      ...message,
-      search_queries: message.search_queries ? [...message.search_queries] : undefined,
-      annotations: message.annotations?.map((annotation) => ({
-        ...annotation,
-        url_citation: { ...annotation.url_citation },
-      })),
-      attachments: message.attachments?.map((attachment) => ({ ...attachment })),
-      is_complete: message.is_complete ?? true,
-    }));
-
-    return {
-      db: {
-        ...db,
-        chats: [record, ...db.chats.filter((item) => item.id !== chat.id)],
-        messages: [
-          ...db.messages.filter((message) => message.chat_id !== chat.id),
-          ...importedMessages,
-        ],
-      },
-      result: record,
-    };
-  });
+      const existing = await getRecord<ChatRecord>(chatsStore, chat.id);
+      const record = buildChatRecord(chat, existing);
+      await requestToPromise(chatsStore.put(record));
+      await deleteMessagesForChat(transaction, chat.id);
+      await Promise.all(
+        messages.map((message) => requestToPromise(messagesStore.put(buildMessageRecord(message))))
+      );
+      return record;
+    },
+    'replaceChatWithMessages'
+  );
 }
 
 export async function updateMessageContent(
@@ -391,20 +401,20 @@ export async function updateMessageContent(
   content: string
 ): Promise<MessageRecord> {
   validateRequired({ messageId }, 'updateMessageContent');
-  return mutateDb((db) => {
-    const target = db.messages.find((message) => message.id === messageId);
-    if (!target) {
-      throw new Error('Message not found');
-    }
-    const updated = { ...target, content };
-    return {
-      db: {
-        ...db,
-        messages: db.messages.map((message) => (message.id === messageId ? updated : message)),
-      },
-      result: updated,
-    };
-  });
+  return writeTransaction<MessageRecord>(
+    MESSAGES_STORE,
+    async (transaction) => {
+      const store = transaction.objectStore(MESSAGES_STORE);
+      const target = await getRecord<MessageRecord>(store, messageId);
+      if (!target) {
+        throw new Error('Message not found');
+      }
+      const updated = { ...target, content };
+      await requestToPromise(store.put(updated));
+      return updated;
+    },
+    'updateMessageContent'
+  );
 }
 
 export async function deleteMessagesByIds(
@@ -416,98 +426,115 @@ export async function deleteMessagesByIds(
     return;
   }
 
-  const idsToDelete = new Set(messageIds);
-  await mutateDb((db) => ({
-    db: {
-      ...db,
-      messages: db.messages.filter(
-        (message) => message.chat_id !== chatId || !idsToDelete.has(message.id)
-      ),
+  await writeTransaction<void>(
+    MESSAGES_STORE,
+    async (transaction) => {
+      const store = transaction.objectStore(MESSAGES_STORE);
+      await Promise.all(
+        messageIds.map(async (messageId) => {
+          const existing = await getRecord<MessageRecord>(store, messageId);
+          if (existing && existing.chat_id === chatId) {
+            await requestToPromise(store.delete(messageId));
+          }
+        })
+      );
     },
-    result: undefined,
-  }));
+    'deleteMessagesByIds'
+  );
 }
 
 export async function incrementMessageUsage(
   userId: string,
   modelTier: ModelTier
 ): Promise<UsageStats | null> {
-  return mutateDb((db) => {
-    const profile = db.profiles.find((item) => item.id === userId);
-    if (!profile) {
-      return { db, result: null };
-    }
+  return writeTransaction<UsageStats | null>(
+    PROFILES_STORE,
+    async (transaction) => {
+      const store = transaction.objectStore(PROFILES_STORE);
+      const profile = await getRecord<Profile>(store, userId);
+      if (!profile) {
+        return null;
+      }
 
-    const today = todayIsoDate();
-    const resetCounters = profile.last_usage_reset_date !== today;
-    const standard =
-      (resetCounters ? 0 : (profile.standard_message_usage ?? 0)) +
-      (modelTier === 'standard' ? 1 : 0);
-    const premium =
-      (resetCounters ? 0 : (profile.premium_message_usage ?? 0)) +
-      (modelTier === 'premium' ? 1 : 0);
+      const today = todayIsoDate();
+      const resetCounters = profile.last_usage_reset_date !== today;
+      const standard =
+        (resetCounters ? 0 : (profile.standard_message_usage ?? 0)) +
+        (modelTier === 'standard' ? 1 : 0);
+      const premium =
+        (resetCounters ? 0 : (profile.premium_message_usage ?? 0)) +
+        (modelTier === 'premium' ? 1 : 0);
 
-    const updated = normalizeProfile({
-      ...profile,
-      standard_message_usage: standard,
-      premium_message_usage: premium,
-      last_usage_reset_date: today,
-    });
-    return {
-      db: upsertProfileInState(db, updated),
-      result: {
+      const updated = normalizeProfile({
+        ...profile,
         standard_message_usage: standard,
         premium_message_usage: premium,
-      },
-    };
-  });
+        last_usage_reset_date: today,
+      });
+      await requestToPromise(store.put(updated));
+      return {
+        standard_message_usage: standard,
+        premium_message_usage: premium,
+      };
+    },
+    'incrementMessageUsage'
+  );
 }
 
 export async function updateChatTitle(chatId: string, newTitle: string): Promise<ChatRecord> {
   validateRequired({ chatId, newTitle }, 'updateChatTitle');
-  return mutateDb((db) => {
-    const target = db.chats.find((chat) => chat.id === chatId);
-    if (!target) {
-      throw new Error('Chat not found');
-    }
-    const updated = { ...target, title: newTitle };
-    return {
-      db: { ...db, chats: db.chats.map((chat) => (chat.id === chatId ? updated : chat)) },
-      result: updated,
-    };
-  });
+  return writeTransaction<ChatRecord>(
+    CHATS_STORE,
+    async (transaction) => {
+      const store = transaction.objectStore(CHATS_STORE);
+      const target = await getRecord<ChatRecord>(store, chatId);
+      if (!target) {
+        throw new Error('Chat not found');
+      }
+      const updated = { ...target, title: newTitle };
+      await requestToPromise(store.put(updated));
+      return updated;
+    },
+    'updateChatTitle'
+  );
 }
 
 export async function updateChatPinStatus(
   chatId: string,
   isPinned: boolean
 ): Promise<ChatRecord | null> {
-  return mutateDb((db) => {
-    const target = db.chats.find((chat) => chat.id === chatId);
-    if (!target) {
-      return { db, result: null };
-    }
-    const updated = { ...target, is_pinned: isPinned };
-    return {
-      db: { ...db, chats: db.chats.map((chat) => (chat.id === chatId ? updated : chat)) },
-      result: updated,
-    };
-  });
+  return writeTransaction<ChatRecord | null>(
+    CHATS_STORE,
+    async (transaction) => {
+      const store = transaction.objectStore(CHATS_STORE);
+      const target = await getRecord<ChatRecord>(store, chatId);
+      if (!target) {
+        return null;
+      }
+      const updated = { ...target, is_pinned: isPinned };
+      await requestToPromise(store.put(updated));
+      return updated;
+    },
+    'updateChatPinStatus'
+  );
 }
 
 export async function updateChatCustomizationPrompt(
   chatId: string,
   customizationPrompt: string | undefined | null
 ): Promise<ChatRecord> {
-  return mutateDb((db) => {
-    const target = db.chats.find((chat) => chat.id === chatId);
-    if (!target) {
-      throw new Error('Chat not found');
-    }
-    const updated = { ...target, customization_prompt: customizationPrompt ?? undefined };
-    return {
-      db: { ...db, chats: db.chats.map((chat) => (chat.id === chatId ? updated : chat)) },
-      result: updated,
-    };
-  });
+  return writeTransaction<ChatRecord>(
+    CHATS_STORE,
+    async (transaction) => {
+      const store = transaction.objectStore(CHATS_STORE);
+      const target = await getRecord<ChatRecord>(store, chatId);
+      if (!target) {
+        throw new Error('Chat not found');
+      }
+      const updated = { ...target, customization_prompt: customizationPrompt ?? undefined };
+      await requestToPromise(store.put(updated));
+      return updated;
+    },
+    'updateChatCustomizationPrompt'
+  );
 }

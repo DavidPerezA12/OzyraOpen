@@ -3,6 +3,7 @@
  */
 
 import { getProfile, upsertProfile } from './db';
+import { writeLocalStorage } from './browserStorage';
 
 export interface UserPreferences {
   name: string;
@@ -15,10 +16,10 @@ export interface UserPreferences {
  * Guarda preferencias en localStorage
  */
 export function savePreferencesToLocalStorage(prefs: UserPreferences): void {
-  localStorage.setItem('userName', prefs.name);
-  localStorage.setItem('userKnowledge', prefs.knowledge);
-  localStorage.setItem('userTraits', prefs.traits);
-  localStorage.setItem('userAdditionalInfo', prefs.additionalInfo);
+  writeLocalStorage('userName', prefs.name);
+  writeLocalStorage('userKnowledge', prefs.knowledge);
+  writeLocalStorage('userTraits', prefs.traits);
+  writeLocalStorage('userAdditionalInfo', prefs.additionalInfo);
 }
 
 /**

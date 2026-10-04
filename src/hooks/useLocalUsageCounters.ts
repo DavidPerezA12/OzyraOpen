@@ -1,7 +1,10 @@
 import { useCallback, useRef, useState } from 'react';
 import { toast } from 'react-hot-toast';
+import { t } from '../i18n';
 import type { ModelTier } from '../types';
 import { incrementMessageUsage } from '../utils/db';
+import { readLocalStorage, writeLocalStorage } from '../utils/browserStorage';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // TYPES
@@ -42,7 +45,7 @@ interface UsageSnapshot {
 }
 
 const readStoredCount = (key: string): number => {
-  const parsed = Number.parseInt(localStorage.getItem(key) ?? '', 10);
+  const parsed = Number.parseInt(readLocalStorage(key) ?? '', 10);
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
@@ -52,7 +55,7 @@ const getInitialUsageSnapshot = (): UsageSnapshot => {
       standard: readStoredCount(STORAGE_KEYS.STANDARD_USAGE),
       premium: readStoredCount(STORAGE_KEYS.PREMIUM_USAGE),
       total: readStoredCount(STORAGE_KEYS.TOTAL_USAGE),
-      date: localStorage.getItem(STORAGE_KEYS.LAST_DATE) ?? '',
+      date: readLocalStorage(STORAGE_KEYS.LAST_DATE) ?? '',
     };
   } catch {
     return { standard: 0, premium: 0, total: 0, date: '' };
@@ -73,7 +76,7 @@ export const useLocalUsageCounters = (): UseLocalUsageCountersReturn => {
    * no lean ambos el mismo estado de React pendiente de commit.
    */
   const updateLocalCounters = useCallback((tier: ModelTier) => {
-    const currentDate = new Date().toISOString().split('T')[0];
+    const currentDate = new Date().toISOString().split('T')[0] ?? '';
     const previous = usageSnapshotRef.current;
     const isNewDay = previous.date !== currentDate;
     const next = {
@@ -93,10 +96,10 @@ export const useLocalUsageCounters = (): UseLocalUsageCountersReturn => {
     usageSnapshotRef.current = next;
     setUsage(next);
 
-    localStorage.setItem(STORAGE_KEYS.STANDARD_USAGE, next.standard.toString());
-    localStorage.setItem(STORAGE_KEYS.PREMIUM_USAGE, next.premium.toString());
-    localStorage.setItem(STORAGE_KEYS.TOTAL_USAGE, next.total.toString());
-    localStorage.setItem(STORAGE_KEYS.LAST_DATE, next.date);
+    writeLocalStorage(STORAGE_KEYS.STANDARD_USAGE, next.standard.toString());
+    writeLocalStorage(STORAGE_KEYS.PREMIUM_USAGE, next.premium.toString());
+    writeLocalStorage(STORAGE_KEYS.TOTAL_USAGE, next.total.toString());
+    writeLocalStorage(STORAGE_KEYS.LAST_DATE, next.date);
   }, []);
 
   // ============================================================================
@@ -118,8 +121,8 @@ export const useLocalUsageCounters = (): UseLocalUsageCountersReturn => {
             setUsage(usageSnapshotRef.current);
           }
         } catch (error) {
-          console.error('Error incrementing message usage:', error);
-          toast.error('Error al actualizar el contador de mensajes');
+          logger.error('Error incrementing message usage:', error);
+          toast.error(t('usageCounterError'));
         }
       } else {
         updateLocalCounters(modelTier);
@@ -129,7 +132,7 @@ export const useLocalUsageCounters = (): UseLocalUsageCountersReturn => {
   );
 
   const resetCounters = useCallback(() => {
-    const todayIso = new Date().toISOString().split('T')[0];
+    const todayIso = new Date().toISOString().split('T')[0] ?? '';
     usageSnapshotRef.current = {
       standard: 0,
       premium: 0,
@@ -137,10 +140,10 @@ export const useLocalUsageCounters = (): UseLocalUsageCountersReturn => {
       date: todayIso,
     };
     setUsage(usageSnapshotRef.current);
-    localStorage.setItem(STORAGE_KEYS.STANDARD_USAGE, '0');
-    localStorage.setItem(STORAGE_KEYS.PREMIUM_USAGE, '0');
-    localStorage.setItem(STORAGE_KEYS.TOTAL_USAGE, '0');
-    localStorage.setItem(STORAGE_KEYS.LAST_DATE, todayIso);
+    writeLocalStorage(STORAGE_KEYS.STANDARD_USAGE, '0');
+    writeLocalStorage(STORAGE_KEYS.PREMIUM_USAGE, '0');
+    writeLocalStorage(STORAGE_KEYS.TOTAL_USAGE, '0');
+    writeLocalStorage(STORAGE_KEYS.LAST_DATE, todayIso);
   }, []);
 
   const updateUsageFromProfile = useCallback((standard: number, premium: number) => {
