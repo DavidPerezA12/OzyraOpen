@@ -1,27 +1,35 @@
 # Ozyra Open
 
-Chat local-first con React, TypeScript y OpenRouter.
+[![CI](https://github.com/DavidPerezA12/OzyraOpen/actions/workflows/ci.yml/badge.svg)](https://github.com/DavidPerezA12/OzyraOpen/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-Ozyra Open guarda tus conversaciones en el navegador y llama a los modelos desde
-el cliente. No necesita Supabase, login ni una base de datos propia.
+**Español: [README.es.md](README.es.md)**
 
-## Capturas
+A local-first chat client built with React, TypeScript, and OpenRouter.
 
-![Pantalla principal de Ozyra Open](docs/assets/ozyra-open-home.jpg)
+Ozyra Open stores your conversations in the browser and calls the models
+directly from the client. No Supabase, no login, no backend database required.
 
-![Ajustes locales de Ozyra Open](docs/assets/ozyra-open-settings.jpg)
+## Screenshots
 
-## Qué ofrece
+![Ozyra Open home screen](docs/assets/ozyra-open-home.jpg)
 
-- Conversaciones locales con importación y exportación en JSON.
-- Streaming de respuestas desde OpenRouter.
-- Selector de modelos con catálogo local y sincronización opcional.
-- Markdown, adjuntos de imagen, razonamiento visible y búsqueda web opcional.
-- Copia local a carpeta cuando el navegador soporta File System Access API.
+![Ozyra Open local settings](docs/assets/ozyra-open-settings.jpg)
 
-## Arranque
+## Features
 
-Requisitos: Node.js 20+, npm 10+ y una clave de OpenRouter.
+- Local conversations with JSON import and export.
+- Streaming responses from OpenRouter.
+- Model selector with a local catalog and optional sync.
+- Markdown, image attachments, visible reasoning, and optional web search.
+- Automatic local folder backup when the browser supports the File System
+  Access API.
+- Interface available in English, Spanish, French, and German.
+
+## Getting started
+
+Requirements: Node.js 20+, npm 10+, and an OpenRouter API key.
 
 ```bash
 npm install
@@ -29,17 +37,17 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Abre `http://localhost:5173` y guarda la clave en `Ajustes > Perfil local`.
+Open `http://localhost:5173` and save your key in `Settings > Local profile`.
 
-## Seguridad
+## Security
 
-Las variables `VITE_` y cualquier clave guardada desde la UI viven en el
-navegador. Usa esta app como cliente local-first: no metas secretos privados en
-`.env.local` que no quieras exponer al frontend.
+`VITE_` variables and any key saved from the UI live in the browser. Use this
+app as a local-first client: do not put private secrets in `.env.local` that
+you would not want exposed to the frontend.
 
-Las claves opcionales de Tavily o Brave Search también viven en el navegador.
-Para una instancia pública compartida conviene usar claves con límites de gasto o
-añadir un backend propio con cuotas.
+Optional Tavily or Brave Search keys also live in the browser. For a shared
+public instance, use keys with spending limits or add your own backend with
+quotas. See [SECURITY.md](SECURITY.md) for the vulnerability reporting policy.
 
 ## Scripts
 
@@ -49,10 +57,15 @@ npm run validate
 npm run build
 ```
 
-`validate` ejecuta type-check, lint, formato y tests.
+`validate` runs type-check, lint, format check, and tests.
 
-## Más
+## Contributing
 
-La guía compacta está en [docs/README.md](docs/README.md).
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for local
+setup, checks, and pull request guidelines.
 
-MIT License. Consulta [LICENSE](LICENSE).
+## More
+
+A compact architecture guide lives in [docs/README.md](docs/README.md).
+
+MIT License. See [LICENSE](LICENSE).

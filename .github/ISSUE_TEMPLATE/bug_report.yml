@@ -1,0 +1,45 @@
+name: Bug report
+description: Report a problem with Ozyra Open
+title: '[Bug]: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much
+        detail as you can — it makes fixes much faster.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, plus what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the app
+        2. Click on...
+        3. See error
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: e.g. Chrome 137, Firefox 140
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model in use (if relevant)
+      placeholder: e.g. anthropic/claude-sonnet-5
+  - type: textarea
+    id: console
+    attributes:
+      label: Console errors
+      description: Open DevTools (F12) > Console and paste any relevant errors.
+      render: text
