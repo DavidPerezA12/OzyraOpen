@@ -16,10 +16,23 @@ import {
   readOpenRouterError,
 } from './openrouter/client';
 import { createOpenRouterStream } from './openrouter/streaming';
+import { parseChatCompletionResponse } from './openrouter/responseValidation';
 import type { ChatCompletionRequest, ChatCompletionResponse } from './openrouter/types';
 import type { MessageAnnotation } from '../types';
+import { logger } from '../utils/logger';
 
 export type { ChatCompletionRequest, ChatMessage } from './openrouter/types';
+
+const readChatCompletionResponse = async (response: Response): Promise<ChatCompletionResponse> => {
+  let data: unknown;
+  try {
+    data = (await response.json()) as unknown;
+  } catch {
+    throw new Error('Invalid chat completion response: body is not valid JSON');
+  }
+
+  return parseChatCompletionResponse(data);
+};
 
 class SecureChatService {
   private static instance: SecureChatService;
@@ -47,15 +60,9 @@ class SecureChatService {
         throw createOpenRouterHttpError(response, detail, errorData);
       }
 
-      const data = await response.json();
-
-      if (data?.error) {
-        throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
-      }
-
-      return data as ChatCompletionResponse;
+      return await readChatCompletionResponse(response);
     } catch (error) {
-      console.error('[ChatService] Error en createChatCompletion:', error);
+      logger.error('[ChatService] Error en createChatCompletion:', error);
       throw normalizeOpenRouterError(error);
     }
   }

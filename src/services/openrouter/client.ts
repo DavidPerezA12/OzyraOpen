@@ -1,8 +1,37 @@
-import { API_CONFIG, ERROR_MESSAGES, STORAGE_KEYS } from '../../config/constants';
+import { API_CONFIG, STORAGE_KEYS } from '../../config/constants';
+import { t } from '../../i18n';
+import {
+  readTrimmedLocalStorage,
+  removeLocalStorage,
+  writeLocalStorage,
+} from '../../utils/browserStorage';
+import { isRecord } from '../../utils/typeGuards';
+import { logger } from '../../utils/logger';
 import type { OpenRouterConfig } from './types';
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(createAbortError());
+  }
+
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+
+    const handleAbort = () => {
+      clearTimeout(timeoutId);
+      cleanup();
+      reject(createAbortError());
+    };
+
+    const cleanup = () => {
+      signal?.removeEventListener('abort', handleAbort);
+    };
+
+    signal?.addEventListener('abort', handleAbort, { once: true });
+  });
 }
 
 function getBackoffDelay(attempt: number): number {
@@ -41,17 +70,35 @@ function createAbortError(): Error {
   return error;
 }
 
-function getLocalOpenRouterApiKey(): string {
-  if (typeof window === 'undefined') {
-    return '';
+const OPENROUTER_PROD_BASE_URL = 'https://openrouter.ai/api/v1';
+
+const isLocalhostBaseUrl = (value: string): boolean =>
+  /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(value);
+
+/**
+ * Resuelve la URL base de OpenRouter con allowlist estricta.
+ *
+ * Sin allowlist, un `VITE_OPENROUTER_BASE_URL` envenenado (build o phishing)
+ * enviaría `Authorization: Bearer <key>` a un host atacante. Solo se permite
+ * el endpoint oficial de producción; en desarrollo también localhost.
+ */
+export function resolveOpenRouterBaseUrl(): string {
+  const raw = (import.meta.env.VITE_OPENROUTER_BASE_URL || OPENROUTER_PROD_BASE_URL).trim();
+  const normalized = raw.replace(/\/$/, '');
+
+  if (normalized === OPENROUTER_PROD_BASE_URL) {
+    return normalized;
   }
 
-  try {
-    return localStorage.getItem(STORAGE_KEYS.OPENROUTER_API_KEY)?.trim() ?? '';
-  } catch {
-    return '';
+  if (import.meta.env.DEV && isLocalhostBaseUrl(normalized)) {
+    return normalized;
   }
+
+  throw new Error(t('openRouterBaseUrlNotAllowed'));
 }
+
+const getLocalOpenRouterApiKey = (): string =>
+  readTrimmedLocalStorage(STORAGE_KEYS.OPENROUTER_API_KEY);
 
 /**
  * Lee la clave de OpenRouter guardada localmente (sin fallback a `.env`).
@@ -66,29 +113,21 @@ export function getStoredOpenRouterApiKey(): string {
  * clave guardada.
  */
 export function saveOpenRouterApiKey(value: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  try {
-    const trimmed = value.trim();
-    if (trimmed) {
-      localStorage.setItem(STORAGE_KEYS.OPENROUTER_API_KEY, trimmed);
-    } else {
-      localStorage.removeItem(STORAGE_KEYS.OPENROUTER_API_KEY);
-    }
-  } catch {
-    // Almacenamiento no disponible (modo privado, cuota); se ignora best-effort.
+  const trimmed = value.trim();
+  if (trimmed) {
+    writeLocalStorage(STORAGE_KEYS.OPENROUTER_API_KEY, trimmed);
+  } else {
+    removeLocalStorage(STORAGE_KEYS.OPENROUTER_API_KEY);
   }
 }
 
 export function getOpenRouterConfig(): OpenRouterConfig {
   const apiKey = getLocalOpenRouterApiKey();
   if (!apiKey) {
-    throw new Error('Configura tu clave de OpenRouter en Ajustes > Perfil local.');
+    throw new Error(t('missingOpenRouterKey'));
   }
 
-  const baseUrl = import.meta.env.VITE_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
+  const baseUrl = resolveOpenRouterBaseUrl();
   const siteUrl =
     import.meta.env.VITE_OPENROUTER_SITE_URL ||
     import.meta.env.VITE_SITE_URL ||
@@ -128,10 +167,10 @@ export async function fetchWithRetry(
 
     if (!response.ok && isRetryableError(response.status) && attempt < API_CONFIG.MAX_RETRIES) {
       const delay = getBackoffDelay(attempt);
-      console.info(
+      logger.info(
         `[ChatService] Error ${response.status}, reintentando en ${delay}ms (intento ${attempt + 1}/${API_CONFIG.MAX_RETRIES})`
       );
-      await sleep(delay);
+      await sleep(delay, options.signal ?? undefined);
       return fetchWithRetry(url, options, attempt + 1);
     }
 
@@ -143,10 +182,10 @@ export async function fetchWithRetry(
 
     if (attempt < API_CONFIG.MAX_RETRIES) {
       const delay = getBackoffDelay(attempt);
-      console.warn(
+      logger.warn(
         `[ChatService] Error de red, reintentando en ${delay}ms (intento ${attempt + 1}/${API_CONFIG.MAX_RETRIES})`
       );
-      await sleep(delay);
+      await sleep(delay, options.signal ?? undefined);
       return fetchWithRetry(url, options, attempt + 1);
     }
     throw error;
@@ -159,9 +198,11 @@ export async function readOpenRouterError(response: Response): Promise<{
 }> {
   let detail = '';
   let errorData: unknown = null;
+  let rawBody = '';
 
   try {
-    const errJson = (await response.json()) as {
+    rawBody = await response.text();
+    const errJson = JSON.parse(rawBody) as {
       details?: string;
       error?: string | { message?: string; metadata?: { provider_name?: string } };
     };
@@ -179,14 +220,25 @@ export async function readOpenRouterError(response: Response): Promise<{
       detail = errJson.error;
     }
   } catch {
-    try {
-      detail = await response.text();
-    } catch {
-      detail = '';
-    }
+    // Evitar volcar HTML gigante en el toast: recortar a 500 caracteres.
+    detail = rawBody.length > 500 ? `${rawBody.slice(0, 500)}…` : rawBody;
   }
 
   return { detail, errorData };
+}
+
+/**
+ * Error HTTP de OpenRouter con mensaje ya listo para mostrar al usuario.
+ * `normalizeOpenRouterError` lo deja pasar sin reescribirlo.
+ */
+export class OpenRouterHttpError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'OpenRouterHttpError';
+    this.status = status;
+  }
 }
 
 export function createOpenRouterHttpError(
@@ -197,26 +249,32 @@ export function createOpenRouterHttpError(
   const status = response.status;
 
   if (status === 401) {
-    return new Error('OpenRouter rechazó la clave API. Revísala en Ajustes > Perfil local.');
+    return new OpenRouterHttpError(t('openRouterInvalidKey'), status);
   }
   if (status === 400) {
-    return new Error(`Solicitud inválida: ${detail || 'Revisa el modelo y el payload.'}`);
+    return new OpenRouterHttpError(
+      t('openRouterBadRequest', { detail: detail || t('openRouterBadRequestHint') }),
+      status
+    );
   }
   if (status === 429) {
-    return new Error('Has alcanzado el límite de solicitudes. Por favor, espera un momento.');
+    return new OpenRouterHttpError(t('openRouterRateLimited'), status);
   }
   if (status === 502 || status === 503) {
-    const providerName = getProviderName(errorData) || 'El proveedor de IA';
-    return new Error(
-      `\u26a0\ufe0f ${providerName} está experimentando problemas técnicos (intentado ${API_CONFIG.MAX_RETRIES} veces). ` +
-        'Por favor, intenta de nuevo en unos minutos o selecciona otro modelo.'
+    const providerName = getProviderName(errorData) || t('openRouterDefaultProvider');
+    return new OpenRouterHttpError(
+      t('openRouterProviderDown', { provider: providerName, retries: API_CONFIG.MAX_RETRIES }),
+      status
     );
   }
   if (status === 504) {
-    return new Error(ERROR_MESSAGES.TIMEOUT_ERROR);
+    return new OpenRouterHttpError(t('timeoutError'), status);
   }
 
-  return new Error(`Error del servidor (${status}): ${detail || 'Error desconocido'}`);
+  return new OpenRouterHttpError(
+    t('openRouterServerError', { status, detail: detail || t('unknownError') }),
+    status
+  );
 }
 
 function getProviderName(errorData: unknown): string | undefined {
@@ -240,30 +298,26 @@ function getProviderName(errorData: unknown): string | undefined {
 
 export function normalizeOpenRouterError(error: unknown): Error {
   if (error instanceof Error) {
-    if (
-      error.message.includes('proveedor') ||
-      error.message.includes('temporalmente') ||
-      error.message.includes('límite')
-    ) {
+    if (error.name === 'OpenRouterHttpError') {
       return error;
     }
 
     if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-      return new Error(ERROR_MESSAGES.TIMEOUT_ERROR);
+      return new Error(t('timeoutError'));
     }
 
     if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-      return new Error(ERROR_MESSAGES.NETWORK_ERROR);
+      return new Error(t('networkError'));
     }
 
     return error;
   }
 
-  return new Error(ERROR_MESSAGES.UNKNOWN_ERROR);
+  return new Error(t('unknownError'));
 }
 
 export async function fetchOpenRouterModels(): Promise<unknown[]> {
-  const baseUrl = import.meta.env.VITE_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
+  const baseUrl = resolveOpenRouterBaseUrl();
   const url = new URL(`${baseUrl.replace(/\/$/, '')}/models`);
   url.searchParams.set('input_modalities', 'text');
   url.searchParams.set('output_modalities', 'text');
@@ -281,19 +335,27 @@ export async function fetchOpenRouterModels(): Promise<unknown[]> {
     // If no API key is configured yet, fetch publicly without credential headers.
   }
 
-  const response = await fetch(url.toString(), {
-    method: 'GET',
-    headers,
-  });
+  const response = await fetch(
+    url.toString(),
+    withRequestTimeout({
+      method: 'GET',
+      headers,
+    })
+  );
 
   if (!response.ok) {
     throw new Error(`Failed to fetch OpenRouter models: ${response.statusText}`);
   }
 
-  const data = await response.json();
-  if (!data || !Array.isArray(data.data)) {
+  const data: unknown = await response.json();
+  if (!isRecord(data) || !Array.isArray(data.data)) {
     throw new Error('Invalid response format from OpenRouter models endpoint');
   }
 
-  return data.data;
+  // Filtrar entradas malformadas: consumidores como mapOpenRouterModelToInfo
+  // asumen `id` string (hacen `model.id.split('/')`).
+  return data.data.filter(
+    (entry): entry is { readonly id: string } & Record<string, unknown> =>
+      isRecord(entry) && typeof entry.id === 'string' && entry.id.length > 0
+  );
 }

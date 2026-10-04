@@ -1,7 +1,16 @@
 import { buildOpenRouterPayload } from './buildPayload';
-import { buildOpenRouterHeaders, getOpenRouterConfig } from './client';
+import { t } from '../../i18n';
+import { escapeThinkingMarkers } from '../../utils/reasoningStream';
+import {
+  buildOpenRouterHeaders,
+  createOpenRouterHttpError,
+  fetchWithRetry,
+  getOpenRouterConfig,
+  readOpenRouterError,
+} from './client';
 import type { ChatCompletionRequest, StreamCallbacks } from './types';
 import type { MessageAnnotation } from '../../types';
+import { logger } from '../../utils/logger';
 
 type StreamDelta = {
   content?: unknown;
@@ -43,7 +52,7 @@ function readReasoningDelta(delta: StreamDelta): string {
       }
 
       if (reasoningDelta) {
-        console.info('[ChatService] reasoning_details detected in stream');
+        logger.info('[ChatService] reasoning_details detected in stream');
       }
     } catch {
       // noop
@@ -93,7 +102,7 @@ export async function createOpenRouterStream(
     const config = getOpenRouterConfig();
     const allowReasoning = Boolean(streamRequest?.reasoning?.enabled);
 
-    console.info('[ChatService] createChatCompletionStream start', {
+    logger.info('[ChatService] createChatCompletionStream start', {
       model: streamRequest.model,
       hasReasoning: Boolean(streamRequest.reasoning),
       allowReasoning,
@@ -110,28 +119,34 @@ export async function createOpenRouterStream(
       fetchOptions.signal = signal;
     }
 
-    const response = await fetch(config.url, fetchOptions);
+    const response = await fetchWithRetry(config.url, fetchOptions);
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Error del servidor: ${errorText}`);
+      const { detail, errorData } = await readOpenRouterError(response);
+      throw createOpenRouterHttpError(response, detail, errorData);
     }
 
     const reader = response.body?.getReader();
     if (!reader) {
-      throw new Error('No se pudo obtener el reader del stream');
+      throw new Error(t('streamReaderError'));
     }
 
     const decoder = new TextDecoder();
     let buffer = '';
     let fullText = '';
     let inReasoning = false;
+    const MAX_STREAM_BUFFER = 1_000_000;
 
     try {
       while (true) {
         const { done, value } = await reader.read();
 
         if (signal?.aborted) {
+          try {
+            await reader.cancel();
+          } catch {
+            // noop: el lector ya puede estar cerrado.
+          }
           throw new DOMException('Streaming request aborted', 'AbortError');
         }
 
@@ -146,6 +161,10 @@ export async function createOpenRouterStream(
         }
 
         buffer += decoder.decode(value, { stream: true });
+        // Evitar crecimiento ilimitado si el proveedor envía una línea gigante.
+        if (buffer.length > MAX_STREAM_BUFFER) {
+          buffer = buffer.slice(-MAX_STREAM_BUFFER);
+        }
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
@@ -175,7 +194,7 @@ export async function createOpenRouterStream(
               if (!inReasoning) {
                 onChunk('<thinking>');
                 inReasoning = true;
-                console.info('[ChatService] Reasoning block started');
+                logger.info('[ChatService] Reasoning block started');
               }
               onChunk(reasoningDelta);
             }
@@ -185,10 +204,13 @@ export async function createOpenRouterStream(
               if (inReasoning) {
                 onChunk('</thinking>');
                 inReasoning = false;
-                console.info('[ChatService] Reasoning block closed');
+                logger.info('[ChatService] Reasoning block closed');
               }
-              fullText += content;
-              onChunk(content);
+              // Neutralizar marcadores inyectados por el modelo: solo la app
+              // puede abrir/cerrar bloques de razonamiento en esta banda.
+              const safeContent = escapeThinkingMarkers(content);
+              fullText += safeContent;
+              onChunk(safeContent);
             }
 
             const annotations = readAnnotations(delta.annotations);
@@ -196,23 +218,27 @@ export async function createOpenRouterStream(
               onAnnotations?.(annotations);
             }
           } catch (parseError) {
-            console.warn('Error parsing stream chunk:', parseError);
+            logger.warn('Error parsing stream chunk:', { detail: parseError });
           }
         }
       }
     } finally {
-      reader.releaseLock();
+      try {
+        reader.releaseLock();
+      } catch {
+        // noop: el lector puede estar ya liberado tras un abort.
+      }
     }
   } catch (error) {
-    const err = error instanceof Error ? error : new Error('Error inesperado');
+    const err = error instanceof Error ? error : new Error(t('unknownError'));
 
     if (err.name === 'AbortError') {
-      console.info('[ChatService] Streaming abortado por señal.');
+      logger.info('[ChatService] Streaming abortado por señal.');
       onError(err);
       return;
     }
 
-    console.error('Error en createChatCompletionStream:', err);
+    logger.error('Error en createChatCompletionStream:', err);
     onError(err);
   }
 }
