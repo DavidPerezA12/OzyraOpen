@@ -28,6 +28,11 @@
 
 import { useState, useMemo, useCallback } from 'react';
 import type { Chat } from '@/types';
+import {
+  readLocalStorageJson,
+  removeLocalStorage,
+  writeLocalStorageJson,
+} from '../utils/browserStorage';
 
 interface SearchFilters {
   /** Filtrar por modelo específico */
@@ -107,12 +112,10 @@ export function useSearch(chats: Chat[], favorites: Set<string> = new Set()): Us
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<SearchFilters>({});
   const [searchHistory, setSearchHistory] = useState<string[]>(() => {
-    try {
-      const stored = localStorage.getItem(SEARCH_HISTORY_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
+    const stored = readLocalStorageJson<unknown>(SEARCH_HISTORY_KEY);
+    return Array.isArray(stored)
+      ? stored.filter((item): item is string => typeof item === 'string')
+      : [];
   });
 
   // Función para hacer fuzzy match
@@ -311,11 +314,7 @@ export function useSearch(chats: Chat[], favorites: Set<string> = new Set()): Us
       const updated = [searchQuery, ...prev.filter((q) => q !== searchQuery)];
       const trimmed = updated.slice(0, MAX_HISTORY_ITEMS);
 
-      try {
-        localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(trimmed));
-      } catch {
-        // Ignore storage errors
-      }
+      writeLocalStorageJson(SEARCH_HISTORY_KEY, trimmed);
 
       return trimmed;
     });
@@ -324,11 +323,7 @@ export function useSearch(chats: Chat[], favorites: Set<string> = new Set()): Us
   // Limpiar historial
   const clearHistory = useCallback(() => {
     setSearchHistory([]);
-    try {
-      localStorage.removeItem(SEARCH_HISTORY_KEY);
-    } catch {
-      // Ignore storage errors
-    }
+    removeLocalStorage(SEARCH_HISTORY_KEY);
   }, []);
 
   const hasActiveFilters = Object.keys(filters).length > 0;

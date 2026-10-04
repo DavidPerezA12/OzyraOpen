@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { t } from '../../i18n';
 import type { WebSearchResponse } from '../search/types';
 import { buildWebSearchContext, runDirectWebSearch } from '../search/providers';
 import { resolveWebSearchForMessage } from './webSearchResolution';
@@ -65,7 +66,7 @@ describe('resolveWebSearchForMessage', () => {
     await expect(resolveWebSearchForMessage('consulta', true)).resolves.toMatchObject({
       directWebSearch: null,
       shouldUseWebSearchTool: true,
-      fallbackMessage: 'Sin clave Se usará OpenRouter para esta respuesta.',
+      fallbackMessage: `Sin clave ${t('webSearchFallbackSuffix')}`,
     });
   });
 });

@@ -1,38 +1,39 @@
 import { useEffect, useRef, useState } from 'react';
 import { getWebSearchSettings, saveWebSearchSettings } from '../../../services/search/settings';
 import type { WebSearchProvider } from '../../../services/search/types';
+import { t, type TranslationKey } from '../../../i18n';
 
 const SEARCH_PROVIDERS: Array<{
   id: WebSearchProvider;
   label: string;
-  description: string;
+  descriptionKey: TranslationKey;
 }> = [
   {
     id: 'openrouter',
     label: 'OpenRouter',
-    description: 'Sin clave adicional. El modelo decide cuándo buscar usando la server tool.',
+    descriptionKey: 'searchProviderOpenRouterDesc',
   },
   {
     id: 'tavily',
     label: 'Tavily',
-    description: 'Búsqueda optimizada para agentes y respuestas con contexto breve.',
+    descriptionKey: 'searchProviderTavilyDesc',
   },
   {
     id: 'brave',
     label: 'Brave Search',
-    description: 'Resultados web directos desde el índice de Brave.',
+    descriptionKey: 'searchProviderBraveDesc',
   },
 ];
 
 const SEARCH_RESULT_COUNTS = [3, 5, 8] as const;
 const SEARCH_CONTEXT_OPTIONS = [
-  { value: 'low', label: 'Breve' },
-  { value: 'medium', label: 'Medio' },
-  { value: 'high', label: 'Amplio' },
+  { value: 'low', labelKey: 'searchContextLow' },
+  { value: 'medium', labelKey: 'searchContextMedium' },
+  { value: 'high', labelKey: 'searchContextHigh' },
 ] as const;
 const TAVILY_DEPTH_OPTIONS = [
-  { value: 'basic', label: 'Básica' },
-  { value: 'advanced', label: 'Avanzada' },
+  { value: 'basic', labelKey: 'searchDepthBasic' },
+  { value: 'advanced', labelKey: 'searchDepthAdvanced' },
 ] as const;
 
 export default function SearchSection() {
@@ -71,14 +72,12 @@ export default function SearchSection() {
   return (
     <div className="cfg-page">
       <div className="cfg-page-header">
-        <h2 className="cfg-page-title">Búsqueda web</h2>
-        <p className="cfg-page-desc">
-          Elige cómo obtiene contexto de internet el botón de búsqueda del compositor.
-        </p>
+        <h2 className="cfg-page-title">{t('searchPageTitle')}</h2>
+        <p className="cfg-page-desc">{t('searchPageDesc')}</p>
       </div>
 
-      <div className="cfg-section" role="radiogroup" aria-label="Proveedor de búsqueda">
-        <span className="cfg-section-label">Proveedor</span>
+      <div className="cfg-section" role="radiogroup" aria-label={t('searchProviderGroup')}>
+        <span className="cfg-section-label">{t('searchProviderLabel')}</span>
         {SEARCH_PROVIDERS.map((provider, index) => {
           const selected = settings.provider === provider.id;
           return (
@@ -92,7 +91,7 @@ export default function SearchSection() {
             >
               <span className="cfg-row-info">
                 <span className="cfg-row-label">{provider.label}</span>
-                <span className="cfg-row-hint">{provider.description}</span>
+                <span className="cfg-row-hint">{t(provider.descriptionKey)}</span>
               </span>
               <span className={`cfg-radio ${selected ? 'cfg-radio--on' : ''}`}>
                 <span className="cfg-radio__dot" />
@@ -104,19 +103,19 @@ export default function SearchSection() {
 
       {settings.provider === 'tavily' && (
         <div className="cfg-section">
-          <span className="cfg-section-label">Clave local</span>
+          <span className="cfg-section-label">{t('searchLocalKeyLabel')}</span>
           <div className="cfg-row">
             <div className="cfg-row-info">
-              <span className="cfg-row-label">Tavily API key</span>
+              <label htmlFor="tavily-api-key" className="cfg-row-label">
+                {t('tavilyKeyLabel')}
+              </label>
               <span className="cfg-row-hint">
-                {activeKeyMissing
-                  ? 'Sin clave: las búsquedas usarán OpenRouter como respaldo.'
-                  : 'Se guarda en localStorage de este navegador.'}
+                {activeKeyMissing ? t('searchNoKeyFallback') : t('searchStoredLocally')}
               </span>
             </div>
             <input
+              id="tavily-api-key"
               type="password"
-              aria-label="Tavily API key"
               className="cfg-input cfg-input--key"
               value={settings.tavilyApiKey}
               onChange={(event) =>
@@ -131,19 +130,19 @@ export default function SearchSection() {
 
       {settings.provider === 'brave' && (
         <div className="cfg-section">
-          <span className="cfg-section-label">Clave local</span>
+          <span className="cfg-section-label">{t('searchLocalKeyLabel')}</span>
           <div className="cfg-row">
             <div className="cfg-row-info">
-              <span className="cfg-row-label">Brave Search API key</span>
+              <label htmlFor="brave-api-key" className="cfg-row-label">
+                {t('braveKeyLabel')}
+              </label>
               <span className="cfg-row-hint">
-                {activeKeyMissing
-                  ? 'Sin clave: las búsquedas usarán OpenRouter como respaldo.'
-                  : 'Se guarda en localStorage de este navegador.'}
+                {activeKeyMissing ? t('searchNoKeyFallback') : t('searchStoredLocally')}
               </span>
             </div>
             <input
+              id="brave-api-key"
               type="password"
-              aria-label="Brave Search API key"
               className="cfg-input cfg-input--key"
               value={settings.braveApiKey}
               onChange={(event) =>
@@ -157,13 +156,11 @@ export default function SearchSection() {
       )}
 
       <div className="cfg-section">
-        <span className="cfg-section-label">Calidad y coste</span>
+        <span className="cfg-section-label">{t('searchQualityCost')}</span>
         <div className="cfg-row cfg-row--border">
           <div className="cfg-row-info">
-            <span className="cfg-row-label">Resultados</span>
-            <span className="cfg-row-hint">
-              Más resultados dan más cobertura y consumen más contexto.
-            </span>
+            <span className="cfg-row-label">{t('searchResultsLabel')}</span>
+            <span className="cfg-row-hint">{t('searchResultsHint')}</span>
           </div>
           <div className="cfg-segment">
             {SEARCH_RESULT_COUNTS.map((count) => (
@@ -181,10 +178,8 @@ export default function SearchSection() {
 
         <div className={`cfg-row ${settings.provider === 'tavily' ? 'cfg-row--border' : ''}`}>
           <div className="cfg-row-info">
-            <span className="cfg-row-label">Contexto</span>
-            <span className="cfg-row-hint">
-              Controla cuánto texto de cada resultado se entrega al modelo.
-            </span>
+            <span className="cfg-row-label">{t('searchContextLabel')}</span>
+            <span className="cfg-row-hint">{t('searchContextHint')}</span>
           </div>
           <div className="cfg-segment">
             {SEARCH_CONTEXT_OPTIONS.map((option) => (
@@ -194,7 +189,7 @@ export default function SearchSection() {
                 className={`cfg-segment-btn ${settings.contextSize === option.value ? 'cfg-segment-btn--active' : ''}`}
                 onClick={() => setSettings((prev) => ({ ...prev, contextSize: option.value }))}
               >
-                {option.label}
+                {t(option.labelKey)}
               </button>
             ))}
           </div>
@@ -203,10 +198,8 @@ export default function SearchSection() {
         {settings.provider === 'tavily' && (
           <div className="cfg-row">
             <div className="cfg-row-info">
-              <span className="cfg-row-label">Profundidad Tavily</span>
-              <span className="cfg-row-hint">
-                La búsqueda avanzada puede mejorar cobertura, con más coste.
-              </span>
+              <span className="cfg-row-label">{t('searchDepthLabel')}</span>
+              <span className="cfg-row-hint">{t('searchDepthHint')}</span>
             </div>
             <div className="cfg-segment">
               {TAVILY_DEPTH_OPTIONS.map((option) => (
@@ -218,7 +211,7 @@ export default function SearchSection() {
                     setSettings((prev) => ({ ...prev, tavilySearchDepth: option.value }))
                   }
                 >
-                  {option.label}
+                  {t(option.labelKey)}
                 </button>
               ))}
             </div>
@@ -227,16 +220,16 @@ export default function SearchSection() {
       </div>
 
       <div className="cfg-actions">
-        {dirty && <span className="cfg-actions-hint">Cambios sin guardar</span>}
+        {dirty && <span className="cfg-actions-hint">{t('unsavedChanges')}</span>}
         <button type="button" onClick={save} className="cfg-btn cfg-btn--primary" disabled={!dirty}>
-          {saveState === 'saved' ? 'Guardado' : 'Guardar búsqueda'}
+          {saveState === 'saved' ? t('searchSaved') : t('searchSave')}
         </button>
       </div>
 
       <p className="cfg-footnote">
         {settings.provider === 'openrouter'
-          ? 'OpenRouter decide cuándo buscar y no necesita una clave adicional. Resultados y contexto se envían como parámetros de su server tool.'
-          : 'Estas claves viven en tu navegador y son visibles para quien tenga acceso a esta sesión. Para uso público conviene mover estos proveedores a un proxy propio. Si Tavily o Brave fallan, Ozyra usará OpenRouter como respaldo para esa respuesta.'}
+          ? t('searchFootnoteOpenRouter')
+          : t('searchFootnoteKeys')}
       </p>
     </div>
   );

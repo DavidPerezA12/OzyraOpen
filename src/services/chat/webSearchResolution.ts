@@ -1,5 +1,7 @@
 import { buildWebSearchContext, runDirectWebSearch } from '../search/providers';
 import type { WebSearchResponse } from '../search/types';
+import { t } from '../../i18n';
+import { logger } from '../../utils/logger';
 
 export interface ResolvedWebSearch {
   readonly directWebSearch: WebSearchResponse | null;
@@ -8,10 +10,10 @@ export interface ResolvedWebSearch {
   readonly fallbackMessage?: string;
 }
 
-const getFallbackMessage = (error: unknown): string =>
-  error instanceof Error
-    ? `${error.message} Se usará OpenRouter para esta respuesta.`
-    : 'No se pudo usar el proveedor de búsqueda. Se usará OpenRouter para esta respuesta.';
+const getFallbackMessage = (error: unknown): string => {
+  const reason = error instanceof Error ? error.message : t('webSearchProviderError');
+  return `${reason} ${t('webSearchFallbackSuffix')}`;
+};
 
 export async function resolveWebSearchForMessage(
   userInput: string,
@@ -24,14 +26,13 @@ export async function resolveWebSearchForMessage(
     try {
       directWebSearch = await runDirectWebSearch(userInput.trim());
       if (directWebSearch && directWebSearch.results.length === 0) {
-        console.info('[App] Búsqueda web directa sin resultados; usando OpenRouter como fallback.');
+        logger.info('[App] Búsqueda web directa sin resultados; usando OpenRouter como fallback.');
         directWebSearch = null;
       }
     } catch (searchError) {
-      console.warn(
-        '[App] Búsqueda web directa fallida; usando OpenRouter como fallback:',
-        searchError
-      );
+      logger.warn('[App] Búsqueda web directa fallida; usando OpenRouter como fallback:', {
+        detail: searchError,
+      });
       fallbackMessage = getFallbackMessage(searchError);
     }
   }
