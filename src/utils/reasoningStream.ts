@@ -58,3 +58,21 @@ export function splitReasoningChunk(chunk: string, wasReasoning: boolean): Reaso
 export function stripReasoningMarkers(text: string): string {
   return text.split(THINKING_OPEN).join('').split(THINKING_CLOSE).join('');
 }
+
+/**
+ * Escapa marcadores literales que vengan del CONTENIDO del modelo.
+ *
+ * El stream mezcla en la misma banda los marcadores emitidos por la app
+ * (`<thinking>`/`</thinking>`) con el texto del modelo. Sin escape, un
+ * modelo (o un prompt inyectado) que escriba `<thinking>` voltea el parser
+ * (`splitReasoningChunk`) y oculta el resto de la respuesta en el bloque
+ * plegable de razonamiento. Se sustituyen por entidades HTML, que Markdown
+ * renderiza como el texto literal original.
+ */
+export function escapeThinkingMarkers(text: string): string {
+  return text
+    .split(THINKING_OPEN)
+    .join('&lt;thinking&gt;')
+    .split(THINKING_CLOSE)
+    .join('&lt;/thinking&gt;');
+}

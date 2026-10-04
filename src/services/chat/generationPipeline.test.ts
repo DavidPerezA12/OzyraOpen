@@ -90,7 +90,11 @@ describe('generationPipeline', () => {
       role: 'system',
       content: expect.stringContaining('Nombre: David'),
     });
-    expect(baseMessages[1]).toEqual({ role: 'system', content: 'Responde con precisión.' });
+    expect(baseMessages[1]).toEqual({
+      role: 'system',
+      content:
+        '--- INICIO PERSONALIZACIÓN DEL CHAT (preferencias del usuario) ---\nResponde con precisión.\n--- FIN PERSONALIZACIÓN DEL CHAT ---',
+    });
     expect(baseMessages[2]).toEqual({ role: 'system', content: 'Contexto web' });
     expect(baseMessages).toHaveLength(13);
     expect(baseMessages[baseMessages.length - 1]).toMatchObject({ role: 'user', content: 'Hola' });

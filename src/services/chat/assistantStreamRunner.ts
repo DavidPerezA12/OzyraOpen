@@ -1,8 +1,10 @@
 import { chatService, type ChatCompletionRequest } from '../chatService';
+import { generateId } from '../../utils/id';
 import type { WebSearchResponse } from '../search/types';
 import type { Message, MessageAnnotation } from '../../types';
 import { splitReasoningChunk, stripReasoningMarkers } from '../../utils/reasoningStream';
 import { buildAssistantMessage } from './generationPipeline';
+import { logger } from '../../utils/logger';
 
 export type AssistantDraftUpdate = Partial<{
   partialResponse: string | null;
@@ -48,7 +50,7 @@ export async function runAssistantStream({
   activeStreamRunIdsRef,
   onDraftUpdate,
 }: RunAssistantStreamParams): Promise<Message> {
-  const streamRunId = crypto.randomUUID();
+  const streamRunId = generateId();
   activeStreamRunIdsRef.current[chatId] = streamRunId;
 
   let accumulatedResponse = '';
@@ -95,7 +97,11 @@ export async function runAssistantStream({
     if (activeFlushTimersRef.current[chatId] !== undefined) {
       return;
     }
-    activeFlushTimersRef.current[chatId] = window.requestAnimationFrame(flushNow);
+    const schedule =
+      typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function'
+        ? window.requestAnimationFrame.bind(window)
+        : (callback: () => void) => window.setTimeout(callback, 16);
+    activeFlushTimersRef.current[chatId] = schedule(flushNow);
   };
 
   const appendStreamChunk = (chunk: string) => {
@@ -129,12 +135,12 @@ export async function runAssistantStream({
     appendStreamChunk,
     () => {
       flushNow();
-      if (isActiveStreamRun()) {
-        resolveFinalText(stripReasoningMarkers(accumulatedResponse));
-      }
+      // Resolver siempre: si el run quedó obsoleto (nuevo stream o cancel),
+      // el llamador decide qué hacer con el texto parcial en lugar de colgarse.
+      resolveFinalText(stripReasoningMarkers(accumulatedResponse));
     },
     (error: Error) => {
-      console.error('Error en stream:', error);
+      logger.error('Error en stream:', error);
       flushNow();
       rejectFinalText(error);
     },

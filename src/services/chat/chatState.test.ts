@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Chat, Message } from '../../types';
+import { t } from '../../i18n';
 import { createLocalChat, updateMessageInChat, upsertChat } from './chatState';
 
 const message = (id: string, content: string): Message => ({
@@ -31,7 +32,7 @@ describe('chatState', () => {
   it('creates a local draft chat for the selected model', () => {
     expect(createLocalChat('anthropic/claude-sonnet-4.5')).toMatchObject({
       id: '00000000-0000-4000-8000-000000000000',
-      title: 'Nueva Conversación',
+      title: t('newChatTitle'),
       messages: [],
       createdAt: 123,
       model: 'anthropic/claude-sonnet-4.5',

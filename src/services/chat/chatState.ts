@@ -1,8 +1,10 @@
 import type { Chat, Message } from '../../types';
+import { t } from '../../i18n';
+import { generateId } from '../../utils/id';
 
 export const createLocalChat = (selectedModel: string): Chat => ({
-  id: crypto.randomUUID(),
-  title: 'Nueva Conversación',
+  id: generateId(),
+  title: t('newChatTitle'),
   messages: [],
   createdAt: Date.now(),
   model: selectedModel,

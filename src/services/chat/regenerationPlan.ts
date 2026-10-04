@@ -30,6 +30,9 @@ export const buildRegenerationPlan = (chat: Chat, messageId?: string): Regenerat
   }
 
   const userMessage = messages[userMessageIndex];
+  if (!userMessage) {
+    return null;
+  }
   return {
     userMessage,
     updatedChat: { ...chat, messages: messages.slice(0, userMessageIndex + 1) },

@@ -1,4 +1,6 @@
 import { getModelInfo, getOpenRouterApiModelId, getReasoningConfig } from '../../config/models';
+import { t } from '../../i18n';
+import { generateId } from '../../utils/id';
 import { getWebSearchSettings } from '../search/settings';
 import { normalizeMessageRole, prepareSystemMessages } from '../../utils/chatOperations';
 import type { ChatCompletionRequest, ChatMessage } from '../chatService';
@@ -70,7 +72,7 @@ export const createUserMessage = ({
   readonly model: string;
   readonly useWebSearch: boolean;
 }): Message => ({
-  id: crypto.randomUUID(),
+  id: generateId(),
   role: 'user',
   content,
   timestamp: Date.now(),
@@ -78,7 +80,7 @@ export const createUserMessage = ({
   useWebSearch,
   attachments: images.map((image) => ({
     type: 'image',
-    name: 'Imagen adjunta',
+    name: t('attachedImageName'),
     url: image.url,
     contentType: image.contentType,
     data: image.data,
@@ -92,7 +94,7 @@ export const createAssistantDraft = ({
   readonly model: string;
   readonly useWebSearch: boolean;
 }): Message => ({
-  id: crypto.randomUUID(),
+  id: generateId(),
   role: 'assistant',
   content: '',
   timestamp: Date.now(),
@@ -130,7 +132,7 @@ export const getStreamRequestConfig = ({
   const apiModelId = useWebSearchTool
     ? getOpenRouterApiModelId(modelId).replace(/:online$/, '')
     : getOpenRouterApiModelId(modelId);
-  const baseModelForCaps = apiModelId.split(':')[0];
+  const baseModelForCaps = apiModelId.split(':')[0] ?? apiModelId;
   const reasoning = supportsReasoning
     ? getReasoningConfig(
         baseModelForCaps,

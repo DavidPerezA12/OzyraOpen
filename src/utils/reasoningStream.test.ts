@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { splitReasoningChunk, stripReasoningMarkers } from './reasoningStream';
+import {
+  escapeThinkingMarkers,
+  splitReasoningChunk,
+  stripReasoningMarkers,
+} from './reasoningStream';
 
 describe('reasoningStream', () => {
   it('splits reasoning and visible response when tags arrive in one chunk', () => {
@@ -41,5 +45,21 @@ describe('reasoningStream', () => {
 
   it('strips internal markers from final visible text defensively', () => {
     expect(stripReasoningMarkers('a<thinking>b</thinking>c')).toBe('abc');
+  });
+
+  it('escapes model-injected markers so the parser never flips state', () => {
+    const escaped = escapeThinkingMarkers('mira <thinking>secreto</thinking> fin');
+    expect(escaped).toBe('mira &lt;thinking&gt;secreto&lt;/thinking&gt; fin');
+
+    const parsed = splitReasoningChunk(escaped, false);
+    expect(parsed).toEqual({
+      responseDelta: 'mira &lt;thinking&gt;secreto&lt;/thinking&gt; fin',
+      thinkingDelta: '',
+      isReasoning: false,
+    });
+  });
+
+  it('leaves text without markers untouched', () => {
+    expect(escapeThinkingMarkers('respuesta normal')).toBe('respuesta normal');
   });
 });

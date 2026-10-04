@@ -1,11 +1,14 @@
 import { useCallback, type Dispatch, type FormEvent, type SetStateAction } from 'react';
 import toast from 'react-hot-toast';
+import { t } from '../i18n';
 import { availableModels, recordModelUsage } from '../config/models';
+import { runAssistantStream } from '../services/chat/assistantStreamRunner';
 import {
-  runAssistantStream,
-  type AssistantDraftUpdate,
-} from '../services/chat/assistantStreamRunner';
-import { getStoredOpenRouterApiKey } from '../services/openrouter/client';
+  applyAssistantDraftUpdate,
+  applyFinalAssistantMessage,
+  markAssistantMessageInterrupted,
+} from '../services/chat/assistantMessageLifecycle';
+import { getStoredOpenRouterApiKey, normalizeOpenRouterError } from '../services/openrouter/client';
 import {
   buildBaseMessages,
   buildStreamRequest,
@@ -27,12 +30,11 @@ import { resolveWebSearchForMessage } from '../services/chat/webSearchResolution
 import type { Chat, ChatGenerationState, Message, ModelTier, UploadedImage } from '../types';
 import { deleteMessagesByIds } from '../utils/db';
 import { generateChatTitle } from '../utils/chatOperations';
+import { isAbortError } from '../utils/errors';
 import { useChatGenerationRegistry } from './useChatGenerationRegistry';
+import { logger } from '../utils/logger';
 
 type IncrementUsage = (modelTier: ModelTier, userId: string | null) => Promise<void>;
-
-const MISSING_OPENROUTER_KEY_MESSAGE =
-  'Configura tu clave de OpenRouter en Ajustes > Perfil local.';
 
 export interface UseChatGenerationParams {
   readonly userId: string | null;
@@ -107,7 +109,7 @@ export function useChatGeneration({
       return true;
     }
 
-    toast.error(MISSING_OPENROUTER_KEY_MESSAGE);
+    toast.error(t('missingOpenRouterKey'));
     return false;
   }, []);
 
@@ -150,11 +152,11 @@ export function useChatGeneration({
       const partial = chatState?.partialResponse || lastMessage.content || '';
       let interruptedMessage: Message | null = null;
       const updatedChat = updateMessageInChat(generatingChat, lastMessage.id, (message) => {
-        interruptedMessage = {
-          ...message,
-          content: `${partial}\n\n_(Generación interrumpida por el usuario)_`,
-          thinkingContent: chatState?.thinkingProcessContent || message.thinkingContent,
-        };
+        interruptedMessage = markAssistantMessageInterrupted({
+          message,
+          partialResponse: partial,
+          thinkingContent: chatState?.thinkingProcessContent,
+        });
         return interruptedMessage;
       });
 
@@ -169,7 +171,7 @@ export function useChatGeneration({
           chatId: targetChatId,
           userId,
         }).catch((error) => {
-          console.error('Error al guardar cancelación en historial local:', error);
+          logger.error('Error al guardar cancelación en historial local:', error);
         });
       }
     },
@@ -213,7 +215,7 @@ export function useChatGeneration({
           userId,
         });
       } catch (error) {
-        console.error('Error al guardar título generado en historial local:', error);
+        logger.error('Error al guardar título generado en historial local:', error);
       }
     },
     [setChats, setCurrentChat, userId]
@@ -239,7 +241,7 @@ export function useChatGeneration({
       const chatId = chatToUse.id;
 
       if (submittingChatIds.has(chatId)) {
-        console.warn('[handleSubmit] Ignorado: ya hay un submit en progreso para este chat');
+        logger.warn('[handleSubmit] Ignorado: ya hay un submit en progreso para este chat');
         return;
       }
       submittingChatIds.add(chatId);
@@ -260,8 +262,8 @@ export function useChatGeneration({
           setChats((prevChats) => upsertChat(prevChats, persistedChat));
           chatToUse = persistedChat;
         } catch (dbError) {
-          console.error('[handleSubmit] Error al crear nuevo chat local:', dbError);
-          toast.error('Error al iniciar la nueva conversación. Revisa la consola.');
+          logger.error('[handleSubmit] Error al crear nuevo chat local:', dbError);
+          toast.error(t('newChatError'));
           submittingChatIds.delete(chatId);
           removeAbortControllerForChat(chatId);
           if (createdThisSubmit) {
@@ -304,7 +306,7 @@ export function useChatGeneration({
               userId,
             });
           } catch (dbError) {
-            console.error(
+            logger.error(
               '[handleSubmit] Error al guardar mensaje del usuario (continuando):',
               dbError
             );
@@ -347,18 +349,9 @@ export function useChatGeneration({
           )
         );
 
-        const applyAssistantDraftUpdate = (updates: AssistantDraftUpdate) => {
-          const updateDraft = (message: Message): Message => ({
-            ...message,
-            content:
-              updates.partialResponse !== undefined
-                ? (updates.partialResponse ?? '')
-                : message.content,
-            thinkingContent:
-              updates.thinkingProcessContent !== undefined
-                ? updates.thinkingProcessContent || undefined
-                : message.thinkingContent,
-          });
+        const updateAssistantDraft = (updates: Parameters<typeof applyAssistantDraftUpdate>[1]) => {
+          const updateDraft = (message: Message): Message =>
+            applyAssistantDraftUpdate(message, updates);
 
           setCurrentChat((prev) =>
             prev && prev.id === chatId
@@ -382,7 +375,7 @@ export function useChatGeneration({
           config: streamConfig,
         });
 
-        console.info('[App] Stream request', {
+        logger.info('[App] Stream request', {
           selectedModel: submittedModel,
           apiModelId: streamConfig.apiModelId,
           usesWebSearchTool: webSearch.shouldUseWebSearchTool,
@@ -403,29 +396,23 @@ export function useChatGeneration({
           activeStreamRunIdsRef,
           onDraftUpdate: (updates) => {
             updateChatGenerationState(chatId, updates);
-            applyAssistantDraftUpdate(updates);
+            updateAssistantDraft(updates);
           },
         });
         recordModelUsage(submittedModel);
 
-        const replaceAssistantDraft = (): ((message: Message) => Message) => (message) => ({
-          ...message,
-          content: finalAssistantMessage.content,
-          thinkingContent: finalAssistantMessage.thinkingContent,
-          useWebSearch: finalAssistantMessage.useWebSearch,
-          searchQueries: finalAssistantMessage.searchQueries,
-          annotations: finalAssistantMessage.annotations,
-        });
+        const replaceAssistantDraft = (message: Message): Message =>
+          applyFinalAssistantMessage(message, finalAssistantMessage);
 
         setCurrentChat((prev) =>
           prev && prev.id === chatId
-            ? updateMessageInChat(prev, assistantMessageId, replaceAssistantDraft())
+            ? updateMessageInChat(prev, assistantMessageId, replaceAssistantDraft)
             : prev
         );
         setChats((prevChats) =>
           prevChats.map((chat) =>
             chat.id === chatId
-              ? updateMessageInChat(chat, assistantMessageId, replaceAssistantDraft())
+              ? updateMessageInChat(chat, assistantMessageId, replaceAssistantDraft)
               : chat
           )
         );
@@ -442,26 +429,25 @@ export function useChatGeneration({
               userId,
             });
             if (saveResult === 'empty') {
-              console.warn('Mensaje del asistente vacío, no se guardará en el historial local');
+              logger.warn('Mensaje del asistente vacío, no se guardará en el historial local');
             }
           } catch (error) {
-            console.error('Error al guardar respuesta AI:', error);
-            toast.error('Error al guardar la respuesta del asistente.');
+            logger.error('Error al guardar respuesta AI:', error);
+            toast.error(t('assistantSaveError'));
           }
         }
 
         await incrementUsage(getModelTier(submittedModel), userId);
         removeAbortControllerForChat(chatToUse.id);
       } catch (error: unknown) {
-        const isAbortError =
-          (error instanceof DOMException && error.name === 'AbortError') ||
-          (error instanceof Error && error.name === 'AbortError');
-
-        if (isAbortError) {
-          console.info('Solicitud cancelada por el usuario');
+        if (isAbortError(error)) {
+          logger.info('Solicitud cancelada por el usuario');
         } else {
-          console.error('Error al enviar mensaje:', error);
-          toast.error('Error al enviar el mensaje');
+          logger.error('Error al enviar mensaje:', error);
+          // Mostrar la causa específica (clave inválida, rate-limit, red…)
+          // en lugar del genérico: los errores OpenRouter ya vienen traducidos.
+          const cause = normalizeOpenRouterError(error);
+          toast.error(cause.message || t('sendMessageError'), { id: `send-error-${chatId}` });
           clearChatGenerationState(chatId);
         }
       } finally {
@@ -521,13 +507,13 @@ export function useChatGeneration({
         return;
       }
       if (submittingChatIds.has(chat.id) || abortControllersRef.current[chat.id]) {
-        toast.error('Ya hay una generación en curso');
+        toast.error(t('generationInProgress'));
         return;
       }
 
       const regenerationPlan = buildRegenerationPlan(chat, messageId);
       if (!regenerationPlan) {
-        toast.error('No se puede regenerar esta respuesta');
+        toast.error(t('cannotRegenerate'));
         return;
       }
       const { userMessage, updatedChat, removedMessageIds, attachmentsOverride } = regenerationPlan;
@@ -538,8 +524,8 @@ export function useChatGeneration({
       );
       if (removedMessageIds.length > 0 && chat.isPersisted) {
         deleteMessagesByIds(chat.id, removedMessageIds).catch((error) => {
-          console.error('Error al limpiar mensajes regenerados en historial local:', error);
-          toast.error('No se pudo actualizar el historial persistido');
+          logger.error('Error al limpiar mensajes regenerados en historial local:', error);
+          toast.error(t('persistHistoryError'));
         });
       }
 
