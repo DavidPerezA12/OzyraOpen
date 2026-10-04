@@ -33,12 +33,13 @@
 
   --text-primary: #f4f4f5;
   --text-secondary: #a1a1aa;
-  --text-muted: #6b6b74;
+  --text-muted: #9c9ca6;
 
   --border: rgba(255, 255, 255, 0.07);
   --border-strong: rgba(255, 255, 255, 0.14);
   --border-primary: rgba(255, 255, 255, 0.07);
   --border-focus: #52525b;
+  --focus-ring: #a1a1aa;
 
   /* Accent — inverso del fondo */
   --accent: #e4e4e7;
@@ -81,12 +82,13 @@ html[data-theme='light'],
 
   --text-primary: #18181b;
   --text-secondary: #55555e;
-  --text-muted: #97979f;
+  --text-muted: #5e5e67;
 
   --border: rgba(0, 0, 0, 0.09);
   --border-strong: rgba(0, 0, 0, 0.16);
   --border-primary: rgba(0, 0, 0, 0.09);
   --border-focus: #3f3f46;
+  --focus-ring: #3f3f46;
 
   --accent: #18181b;
   --accent-hover: #3f3f46;
@@ -341,8 +343,10 @@ html[data-theme='light'] .sidebar-search-container:focus-within,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
   border-radius: var(--radius-full);
   color: var(--text-muted);
   background: var(--bg-elevated);
@@ -1695,11 +1699,26 @@ html[data-theme='light'] .mli-chip svg,
   background: var(--bg-elevated);
   border: 1px solid var(--border);
 }
+/* Foco visible accesible (WCAG 2.4.7 y 2.4.11): nunca eliminar sin sustituto.
+   --focus-ring garantiza ≥3:1 contra el fondo en ambos temas. */
 :focus-visible {
+  outline: 2px solid var(--focus-ring, var(--border-focus));
+  outline-offset: 2px;
+}
+/* Evitar outline permanente con ratón, pero mantenerlo con teclado. */
+:focus:not(:focus-visible) {
   outline: none;
 }
-:focus {
-  outline: none;
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* ============================================================================
@@ -2416,4 +2435,108 @@ html[data-theme='light'] .mli-chip svg,
   line-height: 1.65;
   max-height: 420px;
   overflow-y: auto;
+}
+
+/* Diálogo de confirmación accesible (sustituye a window.confirm) */
+.confirm-dialog {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  max-width: min(26rem, calc(100vw - 2rem));
+  width: 100%;
+}
+
+.confirm-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.confirm-dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  cursor: default;
+}
+
+.confirm-dialog__panel {
+  position: relative;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-lg);
+  padding: 1.25rem 1.25rem 1rem;
+}
+
+.confirm-dialog__title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.confirm-dialog__message {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0 0 1.25rem;
+  overflow-wrap: break-word;
+}
+
+.confirm-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.confirm-dialog__button {
+  border-radius: var(--radius-sm, 8px);
+  border: 1px solid var(--border-strong);
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast, 150ms);
+}
+
+.confirm-dialog__button--secondary {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.confirm-dialog__button--secondary:hover {
+  background: var(--bg-hover);
+}
+
+.confirm-dialog__button--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.confirm-dialog__button--primary:hover {
+  background: var(--accent-hover);
+}
+
+.confirm-dialog__button--danger {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #ffffff;
+}
+
+.confirm-dialog__button--danger:hover {
+  background: #b91c1c;
+}
+
+/* Acciones de mensaje: solo visibles en hover → persistentes en táctil
+   (WCAG 2.1.1: en hover:none nunca aparecerían). */
+@media (hover: none), (pointer: coarse) {
+  .group [class*='group-hover:opacity-100'] {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* WCAG 2.5.8: objetivo mínimo 24×24 para botones de acción de mensaje. */
+.group [class*='group-hover:opacity-100'] button {
+  min-width: 24px;
+  min-height: 24px;
 }
