@@ -17,11 +17,20 @@ import {
 } from './openrouter/client';
 import { createOpenRouterStream } from './openrouter/streaming';
 import { parseChatCompletionResponse } from './openrouter/responseValidation';
-import type { ChatCompletionRequest, ChatCompletionResponse } from './openrouter/types';
-import type { MessageAnnotation } from '../types';
+import type {
+  ChatCompletionRequest,
+  ChatCompletionResponse,
+  StreamCallbacks,
+} from './openrouter/types';
 import { logger } from '../utils/logger';
 
-export type { ChatCompletionRequest, ChatMessage } from './openrouter/types';
+export type {
+  ChatCompletionRequest,
+  ChatMessage,
+  CompletionUsage,
+  ReasoningLevel,
+  StreamMetadata,
+} from './openrouter/types';
 
 const readChatCompletionResponse = async (response: Response): Promise<ChatCompletionResponse> => {
   let data: unknown;
@@ -69,22 +78,10 @@ class SecureChatService {
 
   async createChatCompletionStream(
     request: ChatCompletionRequest,
-    onChunk: (chunk: string) => void,
-    onComplete: (finalText?: string) => void,
-    onError: (error: Error) => void,
-    onAnnotations?: (annotations: MessageAnnotation[]) => void,
+    callbacks: StreamCallbacks,
     signal?: AbortSignal
   ): Promise<void> {
-    await createOpenRouterStream(
-      request,
-      {
-        onChunk,
-        onComplete,
-        onError,
-        onAnnotations,
-      },
-      signal
-    );
+    await createOpenRouterStream(request, callbacks, signal);
   }
 
   async healthCheck(): Promise<boolean> {

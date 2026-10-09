@@ -4,6 +4,7 @@
  */
 
 import React, { useEffect, useReducer, useRef } from 'react';
+import { t } from '../../i18n';
 import { logger } from '../../utils/logger';
 import { readLocalStorage, writeLocalStorage } from '../../utils/browserStorage';
 import CustomizationSection from './sections/CustomizationSection';
@@ -15,7 +16,7 @@ import SearchSection from './sections/SearchSection';
 import ShortcutsSection from './sections/ShortcutsSection';
 import SettingsNav from './SettingsNav';
 import SettingsTopBar from './SettingsTopBar';
-import type { Language, TranslationKey, TranslationParams } from '../../i18n';
+import type { UserPreferences } from '../../utils/userPreferences';
 import type { SettingsTab } from './types';
 
 interface CapabilityFiltersState {
@@ -84,13 +85,6 @@ const settingsModalReducer = (
   patch: Partial<SettingsModalState>
 ): SettingsModalState => ({ ...state, ...patch });
 
-export interface UserPreferences {
-  readonly name: string;
-  readonly knowledge: string;
-  readonly traits: string;
-  readonly additionalInfo: string;
-}
-
 export interface SettingsModalProps {
   readonly showSettings: boolean;
   readonly setShowSettings: (show: boolean) => void;
@@ -99,16 +93,10 @@ export interface SettingsModalProps {
   readonly deleteAllChats: () => void;
   readonly enabledModelIds: readonly string[];
   readonly toggleModelEnabled: (modelId: string) => void;
-  readonly userName: string;
-  readonly userKnowledge: string;
-  readonly userTraits: string;
-  readonly userAdditionalInfo: string;
+  readonly preferences: UserPreferences;
   readonly onSavePreferences: (prefs: UserPreferences) => void;
   readonly handleImport: () => void;
   readonly handleExport: () => void;
-  readonly language: Language;
-  readonly setLanguage: (language: Language) => void;
-  readonly t: (key: TranslationKey, params?: TranslationParams) => string;
 }
 
 // ─────────────────────────────────────────────
@@ -122,25 +110,19 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   deleteAllChats,
   enabledModelIds,
   toggleModelEnabled,
-  userName: initialUserName,
-  userKnowledge: initialUserKnowledge,
-  userTraits: initialUserTraits,
-  userAdditionalInfo: initialUserAdditionalInfo,
+  preferences,
   onSavePreferences,
   handleImport,
   handleExport,
-  language,
-  setLanguage,
-  t,
 }) => {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [settingsState, updateSettingsState] = useReducer(
     settingsModalReducer,
     {
-      userName: initialUserName,
-      userKnowledge: initialUserKnowledge,
-      userTraits: initialUserTraits,
-      userAdditionalInfo: initialUserAdditionalInfo,
+      userName: preferences.name,
+      userKnowledge: preferences.knowledge,
+      userTraits: preferences.traits,
+      userAdditionalInfo: preferences.additionalInfo,
     },
     createSettingsModalState
   );
@@ -213,15 +195,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   let content: React.ReactNode;
   switch (activeTab) {
     case 'local_profile':
-      content = (
-        <LocalProfileSection
-          isDarkMode={isDarkMode}
-          userName={userName}
-          language={language}
-          setLanguage={setLanguage}
-          t={t}
-        />
-      );
+      content = <LocalProfileSection />;
       break;
     case 'customization':
       content = (
@@ -246,18 +220,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     case 'history':
       content = (
         <HistorySection
-          isDarkMode={isDarkMode}
           onImport={handleImport}
           onExport={handleExport}
           onDeleteAll={deleteAllChats}
-          t={t}
         />
       );
       break;
     case 'models':
       content = (
         <ModelsSection
-          isDarkMode={isDarkMode}
           enabledModelIds={[...enabledModelIds]}
           toggleModelEnabled={toggleModelEnabled}
           modelSearch={modelSearch}
@@ -266,7 +237,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           setCapabilityFilters={setCapabilityFilters}
           selectedProviders={selectedProviders}
           setSelectedProviders={setSelectedProviders}
-          t={t}
         />
       );
       break;

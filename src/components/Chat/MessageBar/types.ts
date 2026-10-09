@@ -1,49 +1,29 @@
 import type React from 'react';
-import type { Chat } from '../../../types';
+import type { ComposerState } from '../../../hooks/useChatGeneration';
+import type { ChatCustomizationController } from '../../../hooks/useChatCustomization';
+import type { ReasoningLevel, SubmitChatOptions } from '../../../services/chat/generationPipeline';
+import type { UploadedImage } from '../../../types';
 
-export type ReasoningLevel = 'low' | 'medium' | 'high';
+export type { ReasoningLevel, UploadedImage };
+export type SubmitOptions = SubmitChatOptions;
 
-export interface SubmitOptions {
-  readonly useWebSearch?: boolean;
-  readonly reasoningLevel?: ReasoningLevel;
-}
-
-export interface UploadedImage {
-  readonly url: string;
-  readonly contentType: string;
-  readonly data?: string;
-}
-
-interface ChatMessageBarUiState {
-  readonly isDarkMode: boolean;
-  readonly isLoading: boolean;
-  readonly isModelDropdownOpen: boolean;
-  readonly showChatCustomization: boolean;
-  readonly isImprovingChatCustomization: boolean;
+export interface ModelPickerProps {
+  readonly selectedModel: string;
+  readonly enabledModelIds: readonly string[];
+  readonly onSelectModel: (modelId: string) => void;
+  readonly onOpenSettings: () => void;
 }
 
 export interface ChatMessageBarProps {
-  readonly uiState: ChatMessageBarUiState;
-  readonly inputValue: string;
-  readonly setInputValue: (value: string) => void;
-  readonly handleSubmit: (e: React.FormEvent, options?: SubmitOptions) => void;
-  readonly currentChat: Chat | null;
-  readonly selectedModel: string;
-  readonly setIsModelDropdownOpen: (isOpen: boolean) => void;
-  readonly modelDropdownRef: React.RefObject<HTMLDivElement>;
-  readonly modelSearchQuery: string;
-  readonly setModelSearchQuery: (query: string) => void;
-  readonly enabledModelIds: readonly string[];
-  readonly handleModelSelect: (modelId: string) => void;
-  readonly setShowSettings: (show: boolean) => void;
-  readonly setShowChatCustomization: (show: boolean) => void;
-  readonly currentChatCustomizationInput: string;
-  readonly setCurrentChatCustomizationInput: (input: string) => void;
-  readonly toggleChatCustomizationPopup: () => void;
-  readonly handleSaveChatCustomization: () => void;
-  readonly handleImproveChatCustomization: () => void;
+  readonly isDarkMode: boolean;
+  /** Hay una respuesta generándose en el chat activo */
+  readonly isGenerating: boolean;
+  /** Existe un chat activo (la personalización requiere uno) */
+  readonly hasActiveChat: boolean;
+  readonly composer: ComposerState;
   readonly textareaRef: React.RefObject<HTMLTextAreaElement>;
-  readonly cancelGeneration?: () => void;
-  readonly uploadedImages: readonly UploadedImage[];
-  readonly setUploadedImages: React.Dispatch<React.SetStateAction<UploadedImage[]>>;
+  readonly onSubmit: (e: React.FormEvent, options?: SubmitOptions) => void;
+  readonly onCancel: () => void;
+  readonly modelPicker: ModelPickerProps;
+  readonly customization: ChatCustomizationController;
 }

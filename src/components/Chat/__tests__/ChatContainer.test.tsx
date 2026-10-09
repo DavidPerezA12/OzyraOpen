@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import * as modelsModule from '../../../config/models';
+import * as modelsModule from '../../../models/catalog';
 import ChatContainer from '../ChatContainer';
 import type { Chat, Message, ModelCapabilities, ModelInfo } from '../../../types';
 import { t } from '../../../i18n';
@@ -15,18 +15,14 @@ const baseCapabilities: ModelCapabilities = {
   imageGeneration: false,
   pdfComprehension: false,
   thinking: false,
-  images: false,
-  files: false,
   webSearch: false,
-  tools: false,
-  reasoningLevels: false,
 };
 
 const defaultModel: ModelInfo = {
   id: 'model-1',
   name: 'Model One',
   icon: 'div',
-  provider: 'openrouter',
+  iconKey: 'model',
   displayProviderName: 'OpenRoutes',
   tier: 'standard',
   description: 'Test model',
@@ -81,12 +77,9 @@ describe('ChatContainer', () => {
         currentChat={chat}
         isDarkMode={false}
         isLoading={false}
-        partialResponse={null}
-        streamingComplete={true}
         selectedModel={defaultModel.id}
         editingMessageId={null}
         editingContent=""
-        availableModels={[defaultModel]}
         {...handlers}
       />
     );
@@ -121,12 +114,9 @@ describe('ChatContainer', () => {
         currentChat={chat}
         isDarkMode={false}
         isLoading={false}
-        partialResponse={null}
-        streamingComplete={true}
         selectedModel={defaultModel.id}
         editingMessageId={null}
         editingContent=""
-        availableModels={[defaultModel]}
         {...handlers}
       />
     );
@@ -142,7 +132,7 @@ describe('ChatContainer', () => {
       {
         id: 'msg-1',
         role: 'assistant',
-        content: '',
+        content: 'Generando respuesta...',
         timestamp: Date.now(),
       },
     ]);
@@ -154,17 +144,15 @@ describe('ChatContainer', () => {
         currentChat={chat}
         isDarkMode={false}
         isLoading={true}
-        partialResponse="Generando respuesta..."
-        streamingComplete={false}
         selectedModel={defaultModel.id}
         editingMessageId={null}
         editingContent=""
-        availableModels={[defaultModel]}
         {...handlers}
       />
     );
 
-    expect(screen.getByText('Generando respuesta...')).toBeInTheDocument();
+    // Texto visible del borrador + región aria-live con el mismo contenido.
+    expect(screen.getAllByText('Generando respuesta...').length).toBeGreaterThanOrEqual(2);
   });
 
   it('renders reasoning block when model supports reasoning and message provides thinking content', () => {
@@ -190,12 +178,9 @@ describe('ChatContainer', () => {
         currentChat={chat}
         isDarkMode={false}
         isLoading={true}
-        partialResponse={null}
-        streamingComplete={false}
         selectedModel={defaultModel.id}
         editingMessageId={null}
         editingContent=""
-        availableModels={[defaultModel]}
         {...handlers}
       />
     );
@@ -237,12 +222,9 @@ describe('ChatContainer', () => {
         currentChat={chat}
         isDarkMode={false}
         isLoading={false}
-        partialResponse={null}
-        streamingComplete={true}
         selectedModel="plain-model"
         editingMessageId={null}
         editingContent=""
-        availableModels={[defaultModel]}
         {...handlers}
       />
     );
@@ -272,12 +254,9 @@ describe('ChatContainer', () => {
         currentChat={chat}
         isDarkMode={false}
         isLoading={false}
-        partialResponse={null}
-        streamingComplete={true}
         selectedModel={defaultModel.id}
         editingMessageId={null}
         editingContent=""
-        availableModels={[defaultModel]}
         {...handlers}
       />
     );

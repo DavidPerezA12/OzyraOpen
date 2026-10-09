@@ -21,6 +21,9 @@ import {
 } from './localDbStore';
 import { logger } from './logger';
 
+/** Único perfil de la app: todo es local a este navegador. */
+export const LOCAL_USER_ID = 'local-user';
+
 export interface Profile {
   readonly id: string;
   readonly email: string;
@@ -28,11 +31,6 @@ export interface Profile {
   readonly knowledge?: string;
   readonly traits?: string;
   readonly additionalInfo?: string;
-  readonly has_local_access?: boolean;
-  readonly access_status?: string | null;
-  readonly standard_message_usage?: number;
-  readonly premium_message_usage?: number;
-  readonly last_usage_reset_date?: string | null;
 }
 
 export interface ChatRecord {
@@ -59,13 +57,6 @@ export interface MessageRecord {
   readonly attachments?: readonly MessageAttachment[];
   readonly is_complete?: boolean;
   readonly user_id: string;
-}
-
-export type ModelTier = 'standard' | 'premium';
-
-interface UsageStats {
-  readonly standard_message_usage: number;
-  readonly premium_message_usage: number;
 }
 
 const queueSnapshotAfterWrite = (): void => {
@@ -140,17 +131,6 @@ const validateRequired = (params: Record<string, unknown>, operation: string): v
   }
 };
 
-const todayIsoDate = (): string => new Date().toISOString().split('T')[0] ?? '';
-
-const normalizeProfile = (profile: Profile): Profile => ({
-  ...profile,
-  has_local_access: profile.has_local_access ?? false,
-  access_status: profile.access_status ?? null,
-  standard_message_usage: profile.standard_message_usage ?? 0,
-  premium_message_usage: profile.premium_message_usage ?? 0,
-  last_usage_reset_date: profile.last_usage_reset_date ?? todayIsoDate(),
-});
-
 type ChatInput = Omit<ChatRecord, 'created_at'> & { readonly created_at?: string };
 
 const buildChatRecord = (chat: ChatInput, existing?: ChatRecord): ChatRecord => ({
@@ -186,7 +166,7 @@ export async function getProfile(userId: string): Promise<Profile | null> {
     () => null,
     async (transaction) => {
       const profile = await getRecord<Profile>(transaction.objectStore(PROFILES_STORE), userId);
-      return profile ? normalizeProfile(profile) : null;
+      return profile ?? null;
     }
   );
 }
@@ -198,7 +178,7 @@ export async function upsertProfile(profile: Profile): Promise<Profile> {
     async (transaction) => {
       const store = transaction.objectStore(PROFILES_STORE);
       const existing = await getRecord<Profile>(store, profile.id);
-      const saved = normalizeProfile(existing ? { ...existing, ...profile } : profile);
+      const saved = existing ? { ...existing, ...profile } : profile;
       await requestToPromise(store.put(saved));
       return saved;
     },
@@ -440,44 +420,6 @@ export async function deleteMessagesByIds(
       );
     },
     'deleteMessagesByIds'
-  );
-}
-
-export async function incrementMessageUsage(
-  userId: string,
-  modelTier: ModelTier
-): Promise<UsageStats | null> {
-  return writeTransaction<UsageStats | null>(
-    PROFILES_STORE,
-    async (transaction) => {
-      const store = transaction.objectStore(PROFILES_STORE);
-      const profile = await getRecord<Profile>(store, userId);
-      if (!profile) {
-        return null;
-      }
-
-      const today = todayIsoDate();
-      const resetCounters = profile.last_usage_reset_date !== today;
-      const standard =
-        (resetCounters ? 0 : (profile.standard_message_usage ?? 0)) +
-        (modelTier === 'standard' ? 1 : 0);
-      const premium =
-        (resetCounters ? 0 : (profile.premium_message_usage ?? 0)) +
-        (modelTier === 'premium' ? 1 : 0);
-
-      const updated = normalizeProfile({
-        ...profile,
-        standard_message_usage: standard,
-        premium_message_usage: premium,
-        last_usage_reset_date: today,
-      });
-      await requestToPromise(store.put(updated));
-      return {
-        standard_message_usage: standard,
-        premium_message_usage: premium,
-      };
-    },
-    'incrementMessageUsage'
   );
 }
 

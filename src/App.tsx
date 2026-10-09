@@ -1,9 +1,10 @@
 /**
  * App - Componente principal de Ozyra Open
  *
- * Refactorizado para usar hooks y utilidades modulares
+ * Compone los hooks de estado (chats, generación, preferencias, tema) y
+ * reparte sus datos entre sidebar, conversación, composer y overlays.
  */
-import React, { Suspense, useCallback, useEffect, useRef } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 
 // Components
@@ -17,172 +18,102 @@ import { AppInteractionOverlays } from './components/App/AppInteractionOverlays'
 import { AppToaster } from './components/App/AppToaster';
 import { ChatComposerDock } from './components/App/ChatComposerDock';
 import { CollapsedChatActions } from './components/App/CollapsedChatActions';
-import { WelcomeEmptyState } from './components/App/WelcomeEmptyState';
+import { WelcomeEmptyState, type WelcomeCategory } from './components/App/WelcomeEmptyState';
 import { ZoneErrorFallback } from './components/App/ZoneErrorFallback';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ScrollToBottom } from './components/ui/ScrollToBottom';
-import { useConfirm } from './hooks/useConfirm';
 
-// Config & Models
-import {
-  availableModels,
-  DEFAULT_MODEL_ID,
-  getValidModelId,
-  recordModelUsage,
-} from './config/models';
-// Types
-import type { Chat as ChatType } from './types';
-
-// Hooks
-import { useLocalUsageCounters } from './hooks/useLocalUsageCounters';
-import { useFavorites } from './hooks/useFavorites';
-import { useAppBootstrap } from './hooks/useAppBootstrap';
-import { useAppUiState } from './hooks/useAppUiState';
-import { useChatGeneration } from './hooks/useChatGeneration';
-import { useChatNavigation } from './hooks/useChatNavigation';
+// State & hooks
+import { useModelCatalog } from './models/catalog';
+import { createChatStore, useChatState } from './state/chatStore';
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts';
-import { useMessageEditing } from './hooks/useMessageEditing';
 import { useChatCustomization } from './hooks/useChatCustomization';
+import { useChatGeneration, type ComposerState } from './hooks/useChatGeneration';
+import { readLegacyLocalChats, useChatHistory } from './hooks/useChatHistory';
+import { useChatNavigation } from './hooks/useChatNavigation';
+import { useConfirm } from './hooks/useConfirm';
+import { useFavorites } from './hooks/useFavorites';
+import { useMessageEditing } from './hooks/useMessageEditing';
+import { useModelPreferences } from './hooks/useModelPreferences';
+import { useTheme } from './hooks/useTheme';
+import { useUserPreferences } from './hooks/useUserPreferences';
 
 // Services & Utils
-import { exportChatToJSON } from './utils/chatOperations';
+import type { UploadedImage } from './types';
+import { exportAllChatsToJSON, exportChatToJSON } from './utils/chatOperations';
 import { copyToClipboard as copyTextToClipboard } from './utils/messageOperations';
 import { importChatsFromFile, mergeImportedChats } from './utils/importChats';
-import {
-  savePreferencesToLocalStorage,
-  updatePreferencesInDatabase,
-} from './utils/userPreferences';
-import { readLocalStorage, removeLocalStorage, writeLocalStorage } from './utils/browserStorage';
-import {
-  getCurrentLanguage,
-  getInitialLanguage,
-  LANGUAGE_STORAGE_KEY,
-  setCurrentLanguage,
-  translate,
-  type Language,
-} from './i18n';
+import { t, useLanguage } from './i18n';
 import { logger } from './utils/logger';
 
-const getInitialDarkMode = (): boolean => {
-  const savedTheme = readLocalStorage('theme');
-  if (savedTheme) {
-    return savedTheme === 'dark';
-  }
-  return typeof window === 'undefined'
-    ? true
-    : window.matchMedia('(prefers-color-scheme: dark)').matches;
-};
+const DESKTOP_MEDIA_QUERY = '(min-width: 640px)';
 
 const copyToClipboard = async (text: string): Promise<void> => {
-  const success = await copyTextToClipboard(text);
-  if (!success) {
-    toast.error(translate(getCurrentLanguage(), 'copyError'));
+  if (!(await copyTextToClipboard(text))) {
+    toast.error(t('copyError'));
   }
 };
 
-/**
- * Componente principal de la aplicación Ozyra Open
- *
- * Renderiza la interfaz completa de la aplicación incluyendo sidebar,
- * área de chat, barra de mensajes y modales de configuración.
- * Gestiona todo el estado global y las interacciones del usuario.
- *
- * @returns {JSX.Element} Elemento JSX que representa la aplicación completa
- */
 function App() {
-  const {
-    sidebarOpen,
-    setSidebarOpen,
-    isDarkMode,
-    setIsDarkMode,
-    language,
-    setLanguage: setLanguageState,
-    inputValue,
-    setInputValue,
-    welcomeCategory,
-    setWelcomeCategory,
-    showSettings,
-    setShowSettings,
-    isModelDropdownOpen,
-    setIsModelDropdownOpen,
-    modelSearchQuery,
-    setModelSearchQuery,
-    showAdvancedSearch,
-    setShowAdvancedSearch,
-    showCommandPalette,
-    setShowCommandPalette,
-    showChatCustomization,
-    setShowChatCustomization,
-    currentChatCustomizationInput,
-    setCurrentChatCustomizationInput,
-    isImprovingChatCustomization,
-    setIsImprovingChatCustomization,
-    userName,
-    setUserName,
-    userKnowledge,
-    setUserKnowledge,
-    userTraits,
-    setUserTraits,
-    userAdditionalInfo,
-    setUserAdditionalInfo,
-    uploadedImages,
-    setUploadedImages,
-    editingMessageId,
-    setEditingMessageId,
-    editingContent,
-    setEditingContent,
-  } = useAppUiState(() => ({
-    sidebarOpen:
-      typeof window === 'undefined' ? true : window.matchMedia('(min-width: 640px)').matches,
-    isDarkMode: getInitialDarkMode(),
-    language: getInitialLanguage(),
-    inputValue: '',
-    welcomeCategory: 'explore',
-    showSettings: false,
-    isModelDropdownOpen: false,
-    modelSearchQuery: '',
-    showAdvancedSearch: false,
-    showCommandPalette: false,
-    showChatCustomization: false,
-    currentChatCustomizationInput: '',
-    isImprovingChatCustomization: false,
-    userName: readLocalStorage('userName') ?? '',
-    userKnowledge: readLocalStorage('userKnowledge') ?? '',
-    userTraits: readLocalStorage('userTraits') ?? '',
-    userAdditionalInfo: readLocalStorage('userAdditionalInfo') ?? '',
-    uploadedImages: [],
-    editingMessageId: null,
-    editingContent: '',
-  }));
-  const t = useCallback(
-    (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) =>
-      translate(language, key, params),
-    [language]
+  // Suscripción al idioma: re-renderiza la app al cambiarlo.
+  useLanguage();
+  const { isDarkMode, toggleTheme } = useTheme();
+  const { preferences, savePreferences } = useUserPreferences();
+  const { models } = useModelCatalog();
+  const { selectedModel, setSelectedModel, chooseModel, enabledModelIds, toggleModelEnabled } =
+    useModelPreferences();
+
+  // Chats: una sola fuente de verdad, el chat activo se deriva por id.
+  const [store] = useState(() => createChatStore(readLegacyLocalChats()));
+  const { chats, currentChatId } = useChatState(store);
+  const currentChat = useMemo(
+    () => chats.find((chat) => chat.id === currentChatId) ?? null,
+    [chats, currentChatId]
   );
 
-  useEffect(() => {
-    setCurrentLanguage(language);
-    if (typeof document !== 'undefined') {
-      document.documentElement.lang = language;
-    }
-  }, [language]);
-
-  const setLanguage = useCallback(
-    (nextLanguage: Language) => {
-      setCurrentLanguage(nextLanguage);
-      setLanguageState(nextLanguage);
-      if (!writeLocalStorage(LANGUAGE_STORAGE_KEY, nextLanguage)) {
-        logger.warn('No se pudo guardar el idioma seleccionado');
-      }
-    },
-    [setLanguageState]
+  // UI
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => window.matchMedia(DESKTOP_MEDIA_QUERY).matches
   );
-
+  const [showSettings, setShowSettings] = useState(false);
+  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [welcomeCategory, setWelcomeCategory] = useState<WelcomeCategory>('explore');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
-  // Referencia para el menú desplegable de modelos
-  const modelDropdownRef = useRef<HTMLDivElement>(null);
+  // Composer
+  const [inputValue, setInputValue] = useState('');
+  const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
+  const composer = useMemo<ComposerState>(
+    () => ({ inputValue, setInputValue, uploadedImages, setUploadedImages }),
+    [inputValue, uploadedImages]
+  );
+
+  const {
+    isLoading: isHistoryLoading,
+    deleteChat: deleteStoredChat,
+    deleteAllChats: deleteAllStoredChats,
+    togglePinChat: toggleStoredPin,
+    renameChat: renameStoredChat,
+  } = useChatHistory(store);
+  const { generatingChatIds, handleSubmit, cancelGeneration, regenerateResponse } =
+    useChatGeneration({ store, selectedModel, composer, preferences });
+  const editing = useMessageEditing(store);
+  const customization = useChatCustomization(store);
+  const { confirm, confirmDialog } = useConfirm();
+  const { favorites, toggleFavorite } = useFavorites();
+
+  const resetComposer = useCallback(() => {
+    setInputValue('');
+    setUploadedImages([]);
+  }, []);
+  const { selectChat, startNewChat } = useChatNavigation({
+    store,
+    onNewChat: resetComposer,
+    textareaRef,
+    chatCount: chats.length,
+  });
 
   useAppKeyboardShortcuts({
     setSidebarOpen,
@@ -192,195 +123,55 @@ function App() {
   });
 
   useEffect(() => {
-    const desktopMedia = window.matchMedia('(min-width: 640px)');
-    const syncSidebarToViewport = (event: MediaQueryListEvent) => {
-      setSidebarOpen(event.matches);
-    };
-
+    const desktopMedia = window.matchMedia(DESKTOP_MEDIA_QUERY);
+    const syncSidebarToViewport = (event: MediaQueryListEvent) => setSidebarOpen(event.matches);
     desktopMedia.addEventListener('change', syncSidebarToViewport);
     return () => desktopMedia.removeEventListener('change', syncSidebarToViewport);
-  }, [setSidebarOpen]);
-
-  // Contadores locales informativos para el perfil local.
-  const { incrementUsage, updateUsageFromProfile } = useLocalUsageCounters();
-
-  // Bootstrap de perfil local, chats y modelos habilitados.
-  const {
-    userId,
-    isLocalProfileLoading,
-    chats,
-    setChats,
-    currentChat,
-    setCurrentChat,
-    selectedModel,
-    setSelectedModel,
-    enabledModelIds,
-    setEnabledModelIds,
-    deleteAllChats: deleteAllChatsHook,
-    deleteChat: deleteChatHook,
-    togglePinChat: togglePinChatHook,
-    updateChatTitle: updateChatTitleHook,
-  } = useAppBootstrap({ updateUsageFromProfile });
-
-  const {
-    generatingChatIds,
-    partialResponse,
-    streamingComplete,
-    isLoading,
-    handleSubmit,
-    cancelGeneration,
-    regenerateResponse,
-  } = useChatGeneration({
-    userId,
-    chats,
-    setChats,
-    currentChat,
-    setCurrentChat,
-    selectedModel,
-    inputValue,
-    setInputValue,
-    uploadedImages,
-    setUploadedImages,
-    preferences: {
-      userName,
-      userKnowledge,
-      userTraits,
-      userAdditionalInfo,
-    },
-    incrementUsage,
-  });
-
-  // Perfil local y migraciones gestionadas por hook bootstrap.
-
-  // Persistencia de modelo gestionada por useAppBootstrap
-
-  // Sesión y migraciones gestionadas por useAppBootstrap
-
-  // Persistencia local de chats gestionada por useAppBootstrap
-
-  // Autoscroll ahora lo gestiona el propio ChatContainer
-
-  // Confirmaciones accesibles (sustituye a window.confirm bloqueante).
-  const { confirm, confirmDialog } = useConfirm();
-
-  // Favoritos de chats (antes el filtro existía pero el conjunto siempre vacío).
-  const { favorites, toggleFavorite } = useFavorites();
+  }, []);
 
   useEffect(() => {
-    const textarea = textareaRef.current;
-    if (textarea) {
-      textarea.style.height = 'auto';
-      // Con el input vacío basta el alto mínimo del CSS; medir scrollHeight
-      // en ese estado puede capturar un layout intermedio y dejar el
-      // textarea estirado a su altura máxima.
-      if (inputValue !== '') {
-        const maxHeight = 200;
-        const scrollHeight = textarea.scrollHeight;
-        textarea.style.height = `${Math.min(scrollHeight, maxHeight)}px`;
-      }
-    }
-  }, [inputValue]);
+    const chatTitle = currentChat?.title.trim();
+    document.title = chatTitle ? `${chatTitle} — Ozyra Open` : 'Ozyra Open';
+  }, [currentChat?.title]);
 
-  // Modelos habilitados gestionados por useAppBootstrap
-
-  const { startNewChat } = useChatNavigation({
-    chats,
-    currentChat,
-    setCurrentChat,
-    setInputValue,
-    setUploadedImages,
-    setIsModelDropdownOpen,
-    textareaRef,
-  });
-
-  const toggleModelEnabled = useCallback(
+  const handleModelSelect = useCallback(
     (modelId: string) => {
-      setEnabledModelIds((prev) =>
-        prev.includes(modelId) ? prev.filter((id) => id !== modelId) : [...prev, modelId]
-      );
+      const validModelId = chooseModel(modelId);
+      const chatId = store.getState().currentChatId;
+      if (chatId) {
+        store.updateChat(chatId, (chat) => ({ ...chat, model: validModelId }));
+      }
     },
-    [setEnabledModelIds]
+    [chooseModel, store]
   );
 
-  const handleModelSelect = (modelId: string) => {
-    const validModelId = getValidModelId(modelId);
-    recordModelUsage(validModelId);
-    setSelectedModel(validModelId); // El guardado en localStorage se maneja automáticamente en useEffect
-    setEnabledModelIds((prev) => (prev.includes(validModelId) ? prev : [...prev, validModelId]));
-
-    setIsModelDropdownOpen(false);
-    if (currentChat) {
-      const updatedChat = { ...currentChat, model: validModelId };
-      setCurrentChat(updatedChat);
-      setChats(chats.map((chat: ChatType) => (chat.id === currentChat.id ? updatedChat : chat)));
-    }
-  };
-
-  // Borrar chat usando el hook centralizado
   const deleteChat = useCallback(
     async (chatId: string) => {
-      const chatToDelete = chats.find((chat) => chat.id === chatId);
-      if (!chatToDelete) {
+      const chat = store.getChat(chatId);
+      if (!chat) {
         return;
       }
       const confirmed = await confirm({
         title: t('deleteChatConfirmTitle'),
-        message: t('deleteChatConfirmMessage', { title: chatToDelete.title }),
+        message: t('deleteChatConfirmMessage', { title: chat.title }),
       });
       if (!confirmed) {
         return;
       }
 
+      const wasCurrent = store.getState().currentChatId === chatId;
       try {
-        await deleteChatHook(chatId);
-        if (currentChat?.id === chatId) {
-          const remainingChats = chats
-            .filter((chat) => chat.id !== chatId)
-            .sort((a, b) => b.createdAt - a.createdAt);
-          const nextChat = remainingChats[0] ?? null;
-          setCurrentChat(nextChat);
-          if (nextChat) {
-            setSelectedModel(getValidModelId(nextChat.model));
-            writeLocalStorage('lastActiveChatId', nextChat.id);
-          } else {
-            setSelectedModel(DEFAULT_MODEL_ID);
-            removeLocalStorage('lastActiveChatId');
-          }
+        const nextChat = await deleteStoredChat(chatId);
+        if (wasCurrent && nextChat) {
+          setSelectedModel(nextChat.model);
         }
       } catch (error) {
         logger.error('[deleteChat] Error al eliminar chat:', error);
         toast.error(t('deleteChatError'));
       }
     },
-    [chats, confirm, currentChat?.id, deleteChatHook, setCurrentChat, setSelectedModel, t]
+    [confirm, deleteStoredChat, setSelectedModel, store]
   );
-
-  const toggleTheme = useCallback(() => {
-    setIsDarkMode((currentIsDarkMode) => {
-      const nextIsDarkMode = !currentIsDarkMode;
-      writeLocalStorage('theme', nextIsDarkMode ? 'dark' : 'light');
-      document.body.classList.toggle('dark', nextIsDarkMode);
-      document.body.classList.toggle('light', !nextIsDarkMode);
-      document.documentElement.dataset.theme = nextIsDarkMode ? 'dark' : 'light';
-      document.documentElement.style.colorScheme = nextIsDarkMode ? 'dark' : 'light';
-      return nextIsDarkMode;
-    });
-  }, [setIsDarkMode]);
-
-  useEffect(() => {
-    document.body.classList.toggle('dark', isDarkMode);
-    document.body.classList.toggle('light', !isDarkMode);
-    document.documentElement.dataset.theme = isDarkMode ? 'dark' : 'light';
-    document.documentElement.style.colorScheme = isDarkMode ? 'dark' : 'light';
-  }, [isDarkMode]);
-
-  useEffect(() => {
-    if (typeof document === 'undefined') {
-      return;
-    }
-    const chatTitle = currentChat?.title?.trim();
-    document.title = chatTitle ? `${chatTitle} — Ozyra Open` : 'Ozyra Open';
-  }, [currentChat?.title]);
 
   const deleteAllChats = useCallback(async () => {
     const confirmed = await confirm({
@@ -391,146 +182,77 @@ function App() {
       return;
     }
     try {
-      await deleteAllChatsHook();
+      await deleteAllStoredChats();
       setShowSettings(false);
     } catch (error) {
       logger.error('[deleteAllChats] Error al borrar chats:', error);
       toast.error(t('deleteChatsError'));
     }
-  }, [confirm, deleteAllChatsHook, setShowSettings, t]);
+  }, [confirm, deleteAllStoredChats]);
 
-  // Guardar preferencias (delegado a utilidad)
-  const handleSavePreferences = useCallback(
-    async (prefs: { name: string; knowledge: string; traits: string; additionalInfo: string }) => {
-      setUserName(prefs.name);
-      setUserKnowledge(prefs.knowledge);
-      setUserTraits(prefs.traits);
-      setUserAdditionalInfo(prefs.additionalInfo);
-      savePreferencesToLocalStorage(prefs);
-
-      if (userId) {
-        try {
-          await updatePreferencesInDatabase(userId, prefs);
-        } catch (err) {
-          logger.error('Error al actualizar preferencias locales:', err);
-          toast.error(t('savePreferencesError'));
-        }
+  const togglePinChat = useCallback(
+    async (chatId: string) => {
+      try {
+        await toggleStoredPin(chatId);
+      } catch (error) {
+        logger.error('[togglePinChat] Error al actualizar fijado:', error);
+        toast.error(t('updatePinError'));
       }
     },
-    [setUserAdditionalInfo, setUserKnowledge, setUserName, setUserTraits, userId, t]
+    [toggleStoredPin]
   );
 
-  // Fijar/desfijar chat delegando en el hook centralizado
-  const togglePinChat = async (chatId: string) => {
-    try {
-      await togglePinChatHook(chatId);
-    } catch (error) {
-      logger.error('[togglePinChat] Error al actualizar fijado:', error);
-      toast.error(t('updatePinError'));
-    }
-  };
+  const renameChat = useCallback(
+    async (chatId: string, title: string) => {
+      try {
+        await renameStoredChat(chatId, title);
+      } catch (error) {
+        logger.error('Error al actualizar título en historial local:', error);
+        toast.error(t('updateTitleError'));
+      }
+    },
+    [renameStoredChat]
+  );
 
-  const { startEditingMessage, saveMessageEdit, cancelMessageEdit } = useMessageEditing({
-    currentChat,
-    setChats,
-    setCurrentChat,
-    editingContent,
-    setEditingMessageId,
-    setEditingContent,
-  });
-
-  const {
-    toggleChatCustomizationPopup,
-    handleSaveChatCustomization,
-    handleImproveChatCustomization,
-  } = useChatCustomization({
-    currentChat,
-    setCurrentChat,
-    setChats,
-    userId,
-    showChatCustomization,
-    setShowChatCustomization,
-    currentChatCustomizationInput,
-    setCurrentChatCustomizationInput,
-    setIsImprovingChatCustomization,
-  });
-
-  // Actualizar título de chat usando el hook centralizado
-  const updateChatTitle = async (chatId: string, newTitle: string) => {
-    try {
-      await updateChatTitleHook(chatId, newTitle);
-    } catch (error) {
-      logger.error('Error al actualizar título en historial local:', error);
-      toast.error(t('updateTitleError'));
-    }
-  };
-
-  const handleExport = useCallback(() => {
-    const exportData = {
-      chats: chats.map((chat) => ({
-        ...chat,
-        exportedAt: new Date().toISOString(),
-      })),
-    };
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `ozyra-chats-${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, [chats]);
+  const handleExport = useCallback(() => exportAllChatsToJSON(store.getState().chats), [store]);
 
   const handleImport = useCallback(async () => {
-    const result = await importChatsFromFile({ userId });
-
+    const result = await importChatsFromFile();
     if (!result) {
-      return;
-    } // Usuario canceló
-
+      return; // Usuario canceló
+    }
     if (result.error) {
       toast.error(result.error);
       return;
     }
-
     if (result.chats.length > 0) {
-      setChats((prevChats) => mergeImportedChats(prevChats, result.chats));
+      store.replaceChats(mergeImportedChats([...store.getState().chats], result.chats));
       toast.success(t('importSuccess', { count: result.chats.length }));
     }
-  }, [setChats, userId, t]);
+  }, [store]);
 
-  const closeAdvancedSearch = useCallback(
-    () => setShowAdvancedSearch(false),
-    [setShowAdvancedSearch]
-  );
-  const closeCommandPalette = useCallback(
-    () => setShowCommandPalette(false),
-    [setShowCommandPalette]
-  );
+  const openSettings = useCallback(() => setShowSettings(true), []);
+  const openSidebar = useCallback(() => setSidebarOpen(true), []);
+  const closeAdvancedSearch = useCallback(() => setShowAdvancedSearch(false), []);
+  const closeCommandPalette = useCallback(() => setShowCommandPalette(false), []);
+
   const handleAdvancedSearchSelect = useCallback(
     (chatId: string) => {
-      const chat = chats.find((candidate) => candidate.id === chatId);
-      if (chat) {
-        setCurrentChat(chat);
-        setShowAdvancedSearch(false);
-      }
+      selectChat(chatId);
+      setShowAdvancedSearch(false);
     },
-    [chats, setCurrentChat, setShowAdvancedSearch]
+    [selectChat]
   );
   const handleCommandPaletteSelect = useCallback(
     (chatId: string) => {
-      const chat = chats.find((candidate) => candidate.id === chatId);
-      if (chat) {
-        setCurrentChat(chat);
-      }
+      selectChat(chatId);
       setShowCommandPalette(false);
     },
-    [chats, setCurrentChat, setShowCommandPalette]
+    [selectChat]
   );
   const handleCommandPaletteAction = useCallback(
     (commandId: string) => {
+      const chat = store.getCurrentChat();
       switch (commandId) {
         case 'new-chat':
           startNewChat();
@@ -539,13 +261,13 @@ function App() {
           setShowSettings(true);
           break;
         case 'export':
-          if (currentChat) {
-            exportChatToJSON(currentChat);
+          if (chat) {
+            exportChatToJSON(chat);
           }
           break;
         case 'delete':
-          if (currentChat) {
-            void deleteChat(currentChat.id);
+          if (chat) {
+            void deleteChat(chat.id);
           }
           break;
         case 'toggle-theme':
@@ -554,27 +276,37 @@ function App() {
       }
       setShowCommandPalette(false);
     },
-    [currentChat, deleteChat, setShowCommandPalette, setShowSettings, startNewChat, toggleTheme]
+    [deleteChat, startNewChat, store, toggleTheme]
   );
-  const openSidebar = useCallback(() => setSidebarOpen(true), [setSidebarOpen]);
 
-  const lastVisibleMessage = currentChat?.messages[currentChat.messages.length - 1];
-  const scrollFollowKey = lastVisibleMessage
+  const handleWelcomeSuggestionSelect = useCallback((suggestion: string) => {
+    setInputValue(suggestion);
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
+  }, []);
+
+  const isGenerating = currentChatId !== null && generatingChatIds.includes(currentChatId);
+  const cancelCurrentGeneration = useCallback(() => cancelGeneration(), [cancelGeneration]);
+  const modelPicker = useMemo(
+    () => ({
+      selectedModel,
+      enabledModelIds,
+      onSelectModel: handleModelSelect,
+      onOpenSettings: openSettings,
+    }),
+    [enabledModelIds, handleModelSelect, openSettings, selectedModel]
+  );
+
+  const lastMessage = currentChat?.messages[currentChat.messages.length - 1];
+  const scrollFollowKey = lastMessage
     ? [
         currentChat?.id,
         currentChat?.messages.length,
-        lastVisibleMessage.id,
-        lastVisibleMessage.content.length,
-        lastVisibleMessage.thinkingContent?.length ?? 0,
+        lastMessage.id,
+        lastMessage.content.length,
+        lastMessage.thinkingContent?.length ?? 0,
       ].join(':')
     : null;
-  const handleWelcomeSuggestionSelect = useCallback(
-    (suggestion: string) => {
-      setInputValue(suggestion);
-      setTimeout(() => textareaRef.current?.focus(), 0);
-    },
-    [setInputValue]
-  );
+  const availableModelIds = useMemo(() => models.map((model) => model.id), [models]);
 
   return (
     <div
@@ -587,15 +319,15 @@ function App() {
         <ChatSidebar
           sidebarOpen={sidebarOpen}
           setSidebarOpen={setSidebarOpen}
-          currentChat={currentChat}
+          currentChatId={currentChatId}
           chats={chats}
-          setCurrentChat={setCurrentChat}
+          onSelectChat={selectChat}
           createNewChat={startNewChat}
           togglePinChat={togglePinChat}
           exportChat={exportChatToJSON}
           deleteChat={deleteChat}
           setShowSettings={setShowSettings}
-          updateChatTitle={updateChatTitle}
+          updateChatTitle={renameChat}
           generatingChatIds={generatingChatIds}
         />
       </ErrorBoundary>
@@ -617,25 +349,22 @@ function App() {
               <Chat
                 currentChat={currentChat}
                 isDarkMode={isDarkMode}
-                isLoading={isLoading}
-                partialResponse={partialResponse}
-                streamingComplete={streamingComplete}
+                isLoading={isGenerating}
                 selectedModel={selectedModel}
-                editingMessageId={editingMessageId}
-                editingContent={editingContent}
+                editingMessageId={editing.editingMessageId}
+                editingContent={editing.editingContent}
                 copyToClipboard={copyToClipboard}
-                startEditingMessage={startEditingMessage}
-                saveMessageEdit={saveMessageEdit}
-                cancelMessageEdit={cancelMessageEdit}
+                startEditingMessage={editing.startEditingMessage}
+                saveMessageEdit={editing.saveMessageEdit}
+                cancelMessageEdit={editing.cancelMessageEdit}
                 regenerateResponse={regenerateResponse}
-                setEditingContent={setEditingContent}
-                availableModels={availableModels}
+                setEditingContent={editing.setEditingContent}
               />
             </ErrorBoundary>
           ) : (
             <WelcomeEmptyState
-              isLocalProfileLoading={isLocalProfileLoading}
-              userName={userName}
+              isLocalProfileLoading={isHistoryLoading}
+              userName={preferences.name}
               welcomeCategory={welcomeCategory}
               onWelcomeCategoryChange={setWelcomeCategory}
               onSuggestionSelect={handleWelcomeSuggestionSelect}
@@ -646,35 +375,15 @@ function App() {
         <ChatComposerDock>
           <ErrorBoundary renderFallback={(retry) => <ZoneErrorFallback onRetry={retry} />}>
             <ChatMessageBar
-              uiState={{
-                isDarkMode,
-                isLoading,
-                isModelDropdownOpen,
-                showChatCustomization,
-                isImprovingChatCustomization,
-              }}
-              inputValue={inputValue}
-              setInputValue={setInputValue}
-              handleSubmit={handleSubmit}
-              currentChat={currentChat}
-              selectedModel={selectedModel}
-              setIsModelDropdownOpen={setIsModelDropdownOpen}
-              modelDropdownRef={modelDropdownRef}
-              modelSearchQuery={modelSearchQuery}
-              setModelSearchQuery={setModelSearchQuery}
-              enabledModelIds={enabledModelIds}
-              handleModelSelect={handleModelSelect}
-              setShowSettings={setShowSettings}
-              setShowChatCustomization={setShowChatCustomization}
-              currentChatCustomizationInput={currentChatCustomizationInput}
-              setCurrentChatCustomizationInput={setCurrentChatCustomizationInput}
-              toggleChatCustomizationPopup={toggleChatCustomizationPopup}
-              handleSaveChatCustomization={handleSaveChatCustomization}
-              handleImproveChatCustomization={handleImproveChatCustomization}
+              isDarkMode={isDarkMode}
+              isGenerating={isGenerating}
+              hasActiveChat={currentChat !== null}
+              composer={composer}
               textareaRef={textareaRef}
-              cancelGeneration={cancelGeneration}
-              uploadedImages={uploadedImages}
-              setUploadedImages={setUploadedImages}
+              onSubmit={handleSubmit}
+              onCancel={cancelCurrentGeneration}
+              modelPicker={modelPicker}
+              customization={customization}
             />
           </ErrorBoundary>
         </ChatComposerDock>
@@ -689,16 +398,10 @@ function App() {
           deleteAllChats={deleteAllChats}
           enabledModelIds={enabledModelIds}
           toggleModelEnabled={toggleModelEnabled}
-          userName={userName}
-          userKnowledge={userKnowledge}
-          userTraits={userTraits}
-          userAdditionalInfo={userAdditionalInfo}
-          onSavePreferences={handleSavePreferences}
+          preferences={preferences}
+          onSavePreferences={savePreferences}
           handleImport={handleImport}
           handleExport={handleExport}
-          language={language}
-          setLanguage={setLanguage}
-          t={t}
         />
       </Suspense>
 
@@ -706,7 +409,7 @@ function App() {
         showAdvancedSearch={showAdvancedSearch}
         showCommandPalette={showCommandPalette}
         chats={chats}
-        availableModelIds={availableModels.map((model) => model.id)}
+        availableModelIds={availableModelIds}
         isDarkMode={isDarkMode}
         favorites={favorites}
         onToggleFavorite={toggleFavorite}
@@ -718,12 +421,11 @@ function App() {
       />
       {confirmDialog}
 
-      {/* Scroll to bottom button */}
       <ScrollToBottom
         containerRef={messagesContainerRef}
-        hasNewMessages={!streamingComplete && !!partialResponse}
+        hasNewMessages={isGenerating && Boolean(lastMessage?.content)}
         followKey={scrollFollowKey}
-        resetKey={currentChat?.id ?? null}
+        resetKey={currentChatId}
       />
     </div>
   );

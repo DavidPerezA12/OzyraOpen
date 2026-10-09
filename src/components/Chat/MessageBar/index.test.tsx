@@ -2,84 +2,65 @@ import { createRef } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Chat } from '../../../types';
 import ChatMessageBar from './index';
 import type { ChatMessageBarProps } from './types';
 import { t } from '../../../i18n';
 
-const activeChat: Chat = {
-  id: 'chat-1',
-  title: 'Chat activo',
-  messages: [],
-  createdAt: Date.now(),
-  model: 'openai/gpt-5-chat',
-  isPersisted: true,
-};
+const createCustomization = (
+  overrides: Partial<ChatMessageBarProps['customization']> = {}
+): ChatMessageBarProps['customization'] => ({
+  isOpen: false,
+  draft: '',
+  setDraft: vi.fn(),
+  isImproving: false,
+  toggle: vi.fn(),
+  close: vi.fn(),
+  save: vi.fn(),
+  improve: vi.fn(),
+  ...overrides,
+});
 
 const createProps = (overrides: Partial<ChatMessageBarProps> = {}): ChatMessageBarProps => ({
-  uiState: {
-    isDarkMode: false,
-    isLoading: false,
-    isModelDropdownOpen: false,
-    showChatCustomization: false,
-    isImprovingChatCustomization: false,
+  isDarkMode: false,
+  isGenerating: false,
+  hasActiveChat: true,
+  composer: {
+    inputValue: '',
+    setInputValue: vi.fn(),
+    uploadedImages: [],
+    setUploadedImages: vi.fn(),
   },
-  inputValue: '',
-  setInputValue: vi.fn(),
-  handleSubmit: vi.fn(),
-  currentChat: activeChat,
-  selectedModel: 'openai/gpt-5-chat',
-  setIsModelDropdownOpen: vi.fn(),
-  modelDropdownRef: createRef<HTMLDivElement>(),
-  modelSearchQuery: '',
-  setModelSearchQuery: vi.fn(),
-  enabledModelIds: ['openai/gpt-5-chat'],
-  handleModelSelect: vi.fn(),
-  setShowSettings: vi.fn(),
-  setShowChatCustomization: vi.fn(),
-  currentChatCustomizationInput: '',
-  setCurrentChatCustomizationInput: vi.fn(),
-  toggleChatCustomizationPopup: vi.fn(),
-  handleSaveChatCustomization: vi.fn(),
-  handleImproveChatCustomization: vi.fn(),
   textareaRef: createRef<HTMLTextAreaElement>(),
-  cancelGeneration: vi.fn(),
-  uploadedImages: [],
-  setUploadedImages: vi.fn() as unknown as ChatMessageBarProps['setUploadedImages'],
+  onSubmit: vi.fn(),
+  onCancel: vi.fn(),
+  modelPicker: {
+    selectedModel: 'openai/gpt-5-chat',
+    enabledModelIds: ['openai/gpt-5-chat'],
+    onSelectModel: vi.fn(),
+    onOpenSettings: vi.fn(),
+  },
+  customization: createCustomization(),
   ...overrides,
 });
 
 describe('ChatMessageBar', () => {
   it('opens chat customization from the composer when a chat is active', () => {
-    const toggleChatCustomizationPopup = vi.fn();
+    const customization = createCustomization();
 
-    render(
-      <ChatMessageBar
-        {...createProps({
-          toggleChatCustomizationPopup,
-        })}
-      />
-    );
+    render(<ChatMessageBar {...createProps({ customization })} />);
 
     fireEvent.click(screen.getByRole('button', { name: t('customizeChat') }));
 
-    expect(toggleChatCustomizationPopup).toHaveBeenCalledOnce();
+    expect(customization.toggle).toHaveBeenCalledOnce();
   });
 
   it('does not open chat customization before a chat exists', () => {
-    const toggleChatCustomizationPopup = vi.fn();
+    const customization = createCustomization();
 
-    render(
-      <ChatMessageBar
-        {...createProps({
-          currentChat: null,
-          toggleChatCustomizationPopup,
-        })}
-      />
-    );
+    render(<ChatMessageBar {...createProps({ hasActiveChat: false, customization })} />);
 
     fireEvent.click(screen.getByRole('button', { name: t('customizeChatDisabled') }));
 
-    expect(toggleChatCustomizationPopup).not.toHaveBeenCalled();
+    expect(customization.toggle).not.toHaveBeenCalled();
   });
 });

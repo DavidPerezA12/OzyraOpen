@@ -1,22 +1,12 @@
-import { useCallback, useRef, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { t } from '../i18n';
 import { chatService } from '../services/chatService';
-import type { Chat } from '../types';
+import type { ChatStore } from '../state/chatStore';
 import { updateChatCustomizationPrompt } from '../utils/db';
 import { logger } from '../utils/logger';
 
-interface UseChatCustomizationParams {
-  readonly currentChat: Chat | null;
-  readonly setCurrentChat: Dispatch<SetStateAction<Chat | null>>;
-  readonly setChats: Dispatch<SetStateAction<Chat[]>>;
-  readonly userId: string | null;
-  readonly showChatCustomization: boolean;
-  readonly setShowChatCustomization: Dispatch<SetStateAction<boolean>>;
-  readonly currentChatCustomizationInput: string;
-  readonly setCurrentChatCustomizationInput: Dispatch<SetStateAction<string>>;
-  readonly setIsImprovingChatCustomization: Dispatch<SetStateAction<boolean>>;
-}
+const IMPROVE_CUSTOMIZATION_MODEL = 'google/gemini-2.0-flash-exp:free';
 
 const IMPROVE_CUSTOMIZATION_SYSTEM_PROMPT = `Convierte esta descripción en un prompt del sistema claro y conciso para un asistente de chat.
 
@@ -35,49 +25,47 @@ const cleanImprovedPrompt = (value: string): string =>
     .replace(/^"+|"+$/g, '')
     .trim();
 
-export function useChatCustomization({
-  currentChat,
-  setCurrentChat,
-  setChats,
-  userId,
-  showChatCustomization,
-  setShowChatCustomization,
-  currentChatCustomizationInput,
-  setCurrentChatCustomizationInput,
-  setIsImprovingChatCustomization,
-}: UseChatCustomizationParams) {
+export interface ChatCustomizationController {
+  readonly isOpen: boolean;
+  readonly draft: string;
+  readonly setDraft: (value: string) => void;
+  readonly isImproving: boolean;
+  readonly toggle: () => void;
+  readonly close: () => void;
+  readonly save: () => Promise<void>;
+  readonly improve: () => Promise<void>;
+}
+
+/** Panel de personalización (prompt de sistema) del chat activo. */
+export function useChatCustomization(store: ChatStore): ChatCustomizationController {
+  const [isOpen, setIsOpen] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [isImproving, setIsImproving] = useState(false);
   const isImprovingRef = useRef(false);
 
-  const toggleChatCustomizationPopup = useCallback(() => {
-    if (!currentChat) {
+  const close = useCallback(() => setIsOpen(false), []);
+
+  const toggle = useCallback(() => {
+    const chat = store.getCurrentChat();
+    if (!chat) {
       return;
     }
-    if (!showChatCustomization) {
-      setCurrentChatCustomizationInput(currentChat.customizationPrompt || '');
+    if (!isOpen) {
+      setDraft(chat.customizationPrompt ?? '');
     }
-    setShowChatCustomization(!showChatCustomization);
-  }, [
-    currentChat,
-    setCurrentChatCustomizationInput,
-    setShowChatCustomization,
-    showChatCustomization,
-  ]);
+    setIsOpen(!isOpen);
+  }, [isOpen, store]);
 
-  const handleSaveChatCustomization = useCallback(async () => {
-    if (!currentChat) {
+  const save = useCallback(async () => {
+    const chat = store.getCurrentChat();
+    if (!chat) {
       return;
     }
 
-    const updatedChat = {
-      ...currentChat,
-      customizationPrompt: currentChatCustomizationInput.trim() || undefined,
-    };
-    if (userId && updatedChat.isPersisted) {
+    const customizationPrompt = draft.trim() || undefined;
+    if (chat.isPersisted) {
       try {
-        await updateChatCustomizationPrompt(
-          updatedChat.id,
-          updatedChat.customizationPrompt ?? null
-        );
+        await updateChatCustomizationPrompt(chat.id, customizationPrompt ?? null);
       } catch (error) {
         logger.error('Error al guardar personalización local:', error);
         toast.error(t('customizationSaveError'));
@@ -85,32 +73,22 @@ export function useChatCustomization({
       }
     }
 
-    setCurrentChat(updatedChat);
-    setChats((currentChats) =>
-      currentChats.map((chat) => (chat.id === currentChat.id ? updatedChat : chat))
-    );
-    setShowChatCustomization(false);
-  }, [
-    currentChat,
-    currentChatCustomizationInput,
-    setChats,
-    setCurrentChat,
-    setShowChatCustomization,
-    userId,
-  ]);
+    store.updateChat(chat.id, (current) => ({ ...current, customizationPrompt }));
+    setIsOpen(false);
+  }, [draft, store]);
 
-  const handleImproveChatCustomization = useCallback(async () => {
-    const brief = currentChatCustomizationInput.trim();
+  const improve = useCallback(async () => {
+    const brief = draft.trim();
     if (!brief || isImprovingRef.current) {
       return;
     }
 
     try {
       isImprovingRef.current = true;
-      setIsImprovingChatCustomization(true);
+      setIsImproving(true);
 
       const response = await chatService.createChatCompletion({
-        model: 'google/gemini-2.0-flash-exp:free',
+        model: IMPROVE_CUSTOMIZATION_MODEL,
         messages: [
           { role: 'system', content: IMPROVE_CUSTOMIZATION_SYSTEM_PROMPT },
           { role: 'user', content: `Descripción: ${brief}` },
@@ -121,7 +99,7 @@ export function useChatCustomization({
 
       const improved = response?.choices?.[0]?.message?.content?.trim();
       if (improved) {
-        setCurrentChatCustomizationInput(cleanImprovedPrompt(improved));
+        setDraft(cleanImprovedPrompt(improved));
       } else {
         toast.error(t('customizationImproveError'));
       }
@@ -130,17 +108,9 @@ export function useChatCustomization({
       toast.error(t('customizationImproveAiError'));
     } finally {
       isImprovingRef.current = false;
-      setIsImprovingChatCustomization(false);
+      setIsImproving(false);
     }
-  }, [
-    currentChatCustomizationInput,
-    setCurrentChatCustomizationInput,
-    setIsImprovingChatCustomization,
-  ]);
+  }, [draft]);
 
-  return {
-    toggleChatCustomizationPopup,
-    handleSaveChatCustomization,
-    handleImproveChatCustomization,
-  } as const;
+  return { isOpen, draft, setDraft, isImproving, toggle, close, save, improve };
 }

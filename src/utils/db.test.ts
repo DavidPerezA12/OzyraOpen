@@ -8,7 +8,6 @@ import {
   getChats,
   getMessages,
   getProfile,
-  incrementMessageUsage,
   replaceChatWithMessages,
   updateMessageContent,
   upsertProfile,
@@ -52,23 +51,16 @@ describe('local db', () => {
     );
   });
 
-  it('increments usage from parallel completions without lost updates', async () => {
-    await upsertProfile({
+  it('merges profile updates instead of replacing the stored profile', async () => {
+    await upsertProfile({ id: 'user-1', email: '', name: 'David', knowledge: 'TypeScript' });
+    await upsertProfile({ id: 'user-1', email: '', traits: 'Directo' });
+
+    expect(await getProfile('user-1')).toEqual({
       id: 'user-1',
       email: '',
-      has_local_access: true,
-    });
-
-    await Promise.all(
-      Array.from({ length: 8 }, (_, index) =>
-        incrementMessageUsage('user-1', index % 2 === 0 ? 'standard' : 'premium')
-      )
-    );
-
-    const updated = await incrementMessageUsage('user-1', 'standard');
-    expect(updated).toEqual({
-      standard_message_usage: 5,
-      premium_message_usage: 4,
+      name: 'David',
+      knowledge: 'TypeScript',
+      traits: 'Directo',
     });
   });
 
@@ -385,9 +377,6 @@ describe('environments without IndexedDB', () => {
     expect(await getMessages('chat-1')).toEqual([]);
     expect(await getProfile('user-1')).toBeNull();
 
-    await expect(incrementMessageUsage('user-1', 'standard')).rejects.toBeInstanceOf(
-      DbUnavailableError
-    );
     await expect(upsertProfile({ id: 'user-1', email: '' })).rejects.toBeInstanceOf(
       DbUnavailableError
     );

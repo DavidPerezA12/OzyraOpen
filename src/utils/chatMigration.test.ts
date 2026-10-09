@@ -75,7 +75,7 @@ describe('migrateLocalChatsToDatabase', () => {
       },
     ];
 
-    await expect(migrateLocalChatsToDatabase('local-user', localChats)).resolves.toEqual({
+    await expect(migrateLocalChatsToDatabase(localChats)).resolves.toEqual({
       success: true,
       migratedCount: 1,
     });
@@ -115,7 +115,7 @@ describe('migrateLocalChatsToDatabase', () => {
       },
     ];
 
-    await expect(migrateLocalChatsToDatabase('local-user', localChats)).resolves.toEqual({
+    await expect(migrateLocalChatsToDatabase(localChats)).resolves.toEqual({
       success: false,
       migratedCount: 1,
     });

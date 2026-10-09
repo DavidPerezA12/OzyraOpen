@@ -5,7 +5,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Search, X } from 'lucide-react';
 import { type Chat } from '../../types';
-import { getCurrentLanguage, t, type Language } from '../../i18n';
+import { t, useLanguage } from '../../i18n';
 
 // ============================================================================
 // ICONS
@@ -122,23 +122,21 @@ const TrashIcon = () => (
 // ============================================================================
 interface ChatItemProps {
   readonly chat: Chat;
-  readonly currentChat: Chat | null;
+  readonly isActive: boolean;
   readonly togglePinChat: (chatId: string) => void;
   readonly exportChat: (chat: Chat) => void;
   readonly deleteChat: (chatId: string) => void;
-  readonly setCurrentChat: (chat: Chat) => void;
+  readonly onSelect: (chatId: string) => void;
   readonly updateChatTitle: (chatId: string, newTitle: string) => void;
   readonly isGenerating: boolean;
-  /** Idioma activo; invalida el memo de ChatItem cuando cambia. */
-  readonly language: Language;
 }
 
 interface ChatSidebarProps {
   readonly sidebarOpen: boolean;
   readonly setSidebarOpen: (open: boolean) => void;
-  readonly currentChat: Chat | null;
+  readonly currentChatId: string | null;
   readonly chats: readonly Chat[];
-  readonly setCurrentChat: (chat: Chat | null) => void;
+  readonly onSelectChat: (chatId: string) => void;
   readonly createNewChat: () => void;
   readonly togglePinChat: (chatId: string) => void;
   readonly exportChat: (chat: Chat) => void;
@@ -196,21 +194,22 @@ const getDateGroup = (timestamp: number): DateGroupKey => {
 // ============================================================================
 const ChatItemComponent: React.FC<ChatItemProps> = ({
   chat,
-  currentChat,
+  isActive,
   togglePinChat,
   exportChat,
   deleteChat,
-  setCurrentChat,
+  onSelect,
   updateChatTitle,
   isGenerating,
 }) => {
+  // Suscripción al idioma: el memo de ChatItem no ve cambios de idioma.
+  useLanguage();
   const isPinned = chat.isPinned ?? false;
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState('');
   const titleInputRef = useRef<HTMLInputElement>(null);
-  const isActive = currentChat?.id === chat.id;
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -246,17 +245,7 @@ const ChatItemComponent: React.FC<ChatItemProps> = ({
     }
   };
 
-  const activateChat = () => {
-    setCurrentChat(chat);
-    try {
-      const url = new URL(window.location.href);
-      url.searchParams.set('chat', chat.id);
-      url.searchParams.delete('newChat');
-      window.history.replaceState({}, '', url.toString());
-    } catch {
-      /* ignore */
-    }
-  };
+  const activateChat = () => onSelect(chat.id);
 
   const title = chat.title || t('untitledChatWithId', { suffix: chat.id.slice(-4) });
 
@@ -403,9 +392,8 @@ const ChatItem = React.memo(
     prev.chat.id === next.chat.id &&
     prev.chat.title === next.chat.title &&
     (prev.chat.isPinned ?? false) === (next.chat.isPinned ?? false) &&
-    prev.currentChat?.id === next.currentChat?.id &&
-    prev.isGenerating === next.isGenerating &&
-    prev.language === next.language
+    prev.isActive === next.isActive &&
+    prev.isGenerating === next.isGenerating
 );
 
 // ============================================================================
@@ -414,9 +402,9 @@ const ChatItem = React.memo(
 const ChatSidebar: React.FC<ChatSidebarProps> = ({
   sidebarOpen,
   setSidebarOpen,
-  currentChat,
+  currentChatId,
   chats,
-  setCurrentChat,
+  onSelectChat,
   createNewChat,
   togglePinChat,
   exportChat,
@@ -426,7 +414,6 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
   generatingChatIds,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const activeLanguage = getCurrentLanguage();
   const closeOnMobile = () => {
     if (window.matchMedia('(max-width: 639px)').matches) {
       setSidebarOpen(false);
@@ -438,8 +425,8 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
     closeOnMobile();
   };
 
-  const selectChat = (chat: Chat) => {
-    setCurrentChat(chat);
+  const selectChat = (chatId: string) => {
+    onSelectChat(chatId);
     closeOnMobile();
   };
 
@@ -544,14 +531,13 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
                   <ChatItem
                     key={c.id}
                     chat={c}
-                    currentChat={currentChat}
+                    isActive={c.id === currentChatId}
                     togglePinChat={togglePinChat}
                     exportChat={exportChat}
                     deleteChat={deleteChat}
-                    setCurrentChat={selectChat}
+                    onSelect={selectChat}
                     updateChatTitle={updateChatTitle}
                     isGenerating={generatingChatIdSet.has(c.id)}
-                    language={activeLanguage}
                   />
                 ))}
               </>
@@ -568,14 +554,13 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
                     <ChatItem
                       key={c.id}
                       chat={c}
-                      currentChat={currentChat}
+                      isActive={c.id === currentChatId}
                       togglePinChat={togglePinChat}
                       exportChat={exportChat}
                       deleteChat={deleteChat}
-                      setCurrentChat={selectChat}
+                      onSelect={selectChat}
                       updateChatTitle={updateChatTitle}
                       isGenerating={generatingChatIdSet.has(c.id)}
-                      language={activeLanguage}
                     />
                   ))}
                 </React.Fragment>

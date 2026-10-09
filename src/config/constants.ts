@@ -26,6 +26,64 @@ export const CHAT_CONFIG = {
 } as const;
 
 // ============================================================================
+// GENERATION CONFIGURATION
+// ============================================================================
+
+export const GENERATION_CONFIG = {
+  /** Temperatura de muestreo para respuestas de chat */
+  TEMPERATURE: 0.7,
+
+  /**
+   * Tokens reservados para la respuesta visible. En modelos de razonamiento
+   * `max_tokens` cubre razonamiento + respuesta, así que el presupuesto de
+   * razonamiento se suma encima de este valor.
+   */
+  OUTPUT_TOKENS: 8192,
+
+  /** Presupuesto de razonamiento por nivel (tokens) */
+  REASONING_BUDGET_TOKENS: {
+    low: 2048,
+    medium: 8192,
+    high: 16384,
+  },
+
+  /** Mínimo que aceptan los proveedores con presupuesto explícito (Anthropic) */
+  MIN_REASONING_BUDGET_TOKENS: 1024,
+} as const;
+
+// ============================================================================
+// HISTORY WINDOW CONFIGURATION
+// ============================================================================
+
+/**
+ * Ventana de historial enviada al modelo.
+ *
+ * El inicio de la ventana solo avanza en saltos de `STEP_MESSAGES`: así el
+ * prefijo de la petición (system + historial) se mantiene idéntico entre
+ * turnos y los proveedores pueden reutilizar su prompt cache. Una ventana
+ * que se desliza un mensaje por turno invalida el cache en cada petición.
+ */
+export const HISTORY_CONFIG = {
+  /** Máximo de mensajes de historial por petición */
+  MAX_MESSAGES: 40,
+
+  /** Granularidad con la que avanza el inicio de la ventana */
+  STEP_MESSAGES: 10,
+
+  /** Máximo estimado de tokens de historial por petición */
+  MAX_TOKENS: 32_000,
+
+  /** Estimación de tokens por imagen adjunta */
+  IMAGE_TOKENS: 1_000,
+
+  /** Margen reservado al calcular el hueco disponible en la ventana de contexto */
+  CONTEXT_SAFETY_MARGIN_TOKENS: 2_048,
+
+  /** Ventana mínima de historial, aunque el modelo declare un contexto pequeño */
+  MIN_TOKENS: 1_024,
+} as const;
+
+// ============================================================================
 // API CONFIGURATION
 // ============================================================================
 

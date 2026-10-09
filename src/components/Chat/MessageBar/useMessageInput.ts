@@ -8,6 +8,8 @@ import {
 } from 'react';
 import type { ReasoningLevel, SubmitOptions, UploadedImage } from './types';
 
+const MAX_TEXTAREA_HEIGHT = 200;
+
 interface UseMessageInputOptions {
   readonly inputValue: string;
   readonly setInputValue: (value: string) => void;
@@ -49,8 +51,6 @@ export const useMessageInput = ({
 
   const handleInputChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
     setInputValue(e.target.value);
-    e.target.style.height = 'auto';
-    e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -60,12 +60,19 @@ export const useMessageInput = ({
     }
   };
 
+  // Auto-alto del textarea para cualquier cambio de valor (tecleo, sugerencias,
+  // limpieza tras enviar).
   useEffect(() => {
-    if (textareaRef.current && inputValue === '') {
-      // Con el input vacío basta con volver al alto mínimo definido en CSS;
-      // medir scrollHeight aquí puede capturar un layout intermedio y dejar
-      // el textarea estirado a su altura máxima.
-      textareaRef.current.style.height = 'auto';
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    textarea.style.height = 'auto';
+    // Con el input vacío basta el alto mínimo del CSS; medir scrollHeight en
+    // ese estado puede capturar un layout intermedio y dejar el textarea
+    // estirado a su altura máxima.
+    if (inputValue !== '') {
+      textarea.style.height = `${Math.min(textarea.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`;
     }
   }, [inputValue, textareaRef]);
 

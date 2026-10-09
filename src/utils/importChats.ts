@@ -2,8 +2,9 @@
  * Utilidades para importación de chats
  */
 
-import { DEFAULT_MODEL_ID } from '../config/models';
+import { getDefaultModelId } from '../models/catalog';
 import type { Chat, MessageAnnotation, MessageAttachment } from '../types';
+import { toChatRecord, toMessageRecord } from '../services/chat/chatRecords';
 import { replaceChatWithMessages } from './db';
 import { isRecord, parseStoredChats } from './typeGuards';
 import { isSafeLinkHref } from './safeUrl';
@@ -50,10 +51,6 @@ const sanitizeImportedChats = (chats: Chat[]): Chat[] =>
         : undefined,
     })),
   }));
-
-interface ImportChatsParams {
-  userId: string | null;
-}
 
 interface ImportChatsResult {
   chats: Chat[];
@@ -159,7 +156,7 @@ const parseChatsFromLocalDbState = (raw: unknown): Chat[] => {
     id: chat.id,
     title: chat.title,
     createdAt: parseTimestamp(chat.created_at),
-    model: chat.model || DEFAULT_MODEL_ID,
+    model: chat.model || getDefaultModelId(),
     customizationPrompt: chat.customization_prompt,
     isPinned: chat.is_pinned ?? false,
     isPersisted: true,
@@ -170,7 +167,7 @@ const parseChatsFromLocalDbState = (raw: unknown): Chat[] => {
         role: message.role,
         content: message.content,
         timestamp: message.timestamp,
-        model: message.model || chat.model || DEFAULT_MODEL_ID,
+        model: message.model || chat.model || getDefaultModelId(),
         thinkingContent: message.thinking_content,
         useWebSearch: message.use_web_search,
         searchQueries: message.search_queries,
@@ -230,7 +227,6 @@ export interface PersistImportedChatsResult {
 const IMPORT_PERSIST_CONCURRENCY = 5;
 
 export const persistImportedChats = async (
-  userId: string,
   importedChats: readonly Chat[]
 ): Promise<PersistImportedChatsResult> => {
   const persistedIds = new Set<string>();
@@ -240,36 +236,9 @@ export const persistImportedChats = async (
   const persistOne = async (chat: Chat): Promise<void> => {
     try {
       await replaceChatWithMessages(
-        {
-          id: chat.id,
-          title: chat.title,
-          created_at: new Date(chat.createdAt).toISOString(),
-          user_id: userId,
-          model: chat.model || DEFAULT_MODEL_ID,
-          customization_prompt: chat.customizationPrompt,
-          is_pinned: chat.isPinned || false,
-        },
-        chat.messages.map((message) => {
-          const normalizedRole =
-            message.role === 'assistant' || message.role === 'user' ? message.role : 'assistant';
-
-          return {
-            id: message.id,
-            chat_id: chat.id,
-            role: normalizedRole,
-            content: message.content,
-            timestamp: message.timestamp || Date.now(),
-            model: message.model,
-            thinking_content: message.thinkingContent,
-            use_web_search: message.useWebSearch,
-            search_queries: message.searchQueries,
-            annotations: message.annotations,
-            attachments: message.attachments,
-            user_id: userId,
-          };
-        })
+        toChatRecord(chat),
+        chat.messages.map((message) => toMessageRecord(message, chat.id))
       );
-
       persistedIds.add(chat.id);
     } catch (error) {
       logger.error(`Error al persistir chat ${chat.id}:`, error);
@@ -297,9 +266,7 @@ export const persistImportedChats = async (
 /**
  * Importa chats desde un archivo JSON
  */
-export async function importChatsFromFile(
-  params: ImportChatsParams
-): Promise<ImportChatsResult | null> {
+export async function importChatsFromFile(): Promise<ImportChatsResult | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -371,10 +338,7 @@ export async function importChatsFromFile(
               throw new Error(t('importNoValidChats'));
             }
 
-            // Persistir en la DB local cuando exista un perfil local activo.
-            const persisted = params.userId
-              ? await persistImportedChats(params.userId, importedChats)
-              : { persistedIds: new Set<string>(), failed: [] as string[] };
+            const persisted = await persistImportedChats(importedChats);
 
             const normalizedChats: Chat[] = importedChats.map((chat) => ({
               ...chat,

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { DEFAULT_MODEL_ID } from '../config/models';
+import { getDefaultModelId } from '../models/catalog';
 import { createChat, createMessage, getChats, getMessages } from './db';
 import { parseImportableChats, persistImportedChats } from './importChats';
 
@@ -8,7 +8,7 @@ const makeStoredChat = (overrides: Record<string, unknown> = {}) => ({
   id: 'chat-1',
   title: 'Imported chat',
   createdAt: 1_700_000_000_000,
-  model: DEFAULT_MODEL_ID,
+  model: getDefaultModelId(),
   messages: [
     {
       id: 'message-1',
@@ -76,7 +76,7 @@ describe('parseImportableChats', () => {
               title: 'DB chat',
               created_at: '2026-06-10T12:00:00.000Z',
               user_id: 'local-user',
-              model: DEFAULT_MODEL_ID,
+              model: getDefaultModelId(),
               customization_prompt: 'Be concise',
               is_pinned: true,
             },
@@ -185,7 +185,7 @@ describe('parseImportableChats', () => {
       ],
     });
 
-    const { persistedIds, failed } = await persistImportedChats('local-user', chats);
+    const { persistedIds, failed } = await persistImportedChats(chats);
 
     expect(failed).toEqual([]);
     expect([...persistedIds]).toEqual(['chat-1', 'chat-2']);
@@ -205,7 +205,7 @@ describe('parseImportableChats', () => {
       id: 'chat-1',
       title: 'Old title',
       user_id: 'local-user',
-      model: DEFAULT_MODEL_ID,
+      model: getDefaultModelId(),
     });
     await createMessage({
       id: 'old-message',
@@ -232,7 +232,7 @@ describe('parseImportableChats', () => {
       ],
     });
 
-    await persistImportedChats('local-user', chats);
+    await persistImportedChats(chats);
 
     expect(await getChats('local-user')).toEqual([
       expect.objectContaining({ id: 'chat-1', title: 'Restored title' }),

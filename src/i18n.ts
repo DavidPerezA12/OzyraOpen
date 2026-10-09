@@ -1,8 +1,9 @@
-import { readLocalStorage } from './utils/browserStorage';
+import { useSyncExternalStore } from 'react';
+import { readLocalStorage, writeLocalStorage } from './utils/browserStorage';
 
 export type Language = 'es' | 'en' | 'fr' | 'de';
 
-export const LANGUAGE_STORAGE_KEY = 'ozyra:ui:language';
+const LANGUAGE_STORAGE_KEY = 'ozyra:ui:language';
 
 export const languageOptions: readonly { code: Language; label: string; nativeLabel: string }[] = [
   { code: 'es', label: 'Spanish', nativeLabel: 'Español' },
@@ -59,7 +60,6 @@ const translations = {
     emptyChatSelect: 'Selecciona o crea una conversación',
     modelsDropdownTitle: 'Modelos',
     noModelsFound: 'No se encontraron modelos',
-    modelBadgeNew: 'Nuevo',
     modelBadgeRecommended: 'Rec.',
     modelBadgeAdvanced: 'Avanzado',
     modelFree: 'Sin coste',
@@ -176,6 +176,12 @@ const translations = {
     openRouterBadRequest: 'Solicitud inválida: {detail}',
     openRouterBadRequestHint: 'Revisa el modelo y el payload.',
     openRouterRateLimited: 'Has alcanzado el límite de solicitudes. Por favor, espera un momento.',
+    openRouterInsufficientCredits:
+      'No tienes créditos suficientes en OpenRouter para esta respuesta. Recarga saldo o elige un modelo más barato.',
+    responseTruncated:
+      'La respuesta se cortó al alcanzar el límite de tokens. Pide al modelo que continúe.',
+    responseTruncatedEmpty:
+      'El modelo agotó el límite de tokens razonando y no llegó a responder. Prueba con un nivel de razonamiento más bajo.',
     openRouterProviderDown:
       '⚠️ {provider} está experimentando problemas técnicos (intentado {retries} veces). Por favor, intenta de nuevo en unos minutos o selecciona otro modelo.',
     openRouterDefaultProvider: 'El proveedor de IA',
@@ -468,7 +474,6 @@ const translations = {
     emptyChatSelect: 'Select or create a conversation',
     modelsDropdownTitle: 'Models',
     noModelsFound: 'No models found',
-    modelBadgeNew: 'New',
     modelBadgeRecommended: 'Rec.',
     modelBadgeAdvanced: 'Advanced',
     modelFree: 'Free',
@@ -583,6 +588,11 @@ const translations = {
     openRouterBadRequest: 'Invalid request: {detail}',
     openRouterBadRequestHint: 'Check the model and the payload.',
     openRouterRateLimited: 'You have reached the request limit. Please wait a moment.',
+    openRouterInsufficientCredits:
+      'You do not have enough OpenRouter credits for this response. Top up your balance or pick a cheaper model.',
+    responseTruncated: 'The response was cut off at the token limit. Ask the model to continue.',
+    responseTruncatedEmpty:
+      'The model used up its token limit while reasoning and did not answer. Try a lower reasoning level.',
     openRouterProviderDown:
       '⚠️ {provider} is experiencing technical issues (tried {retries} times). Please try again in a few minutes or pick another model.',
     openRouterDefaultProvider: 'The AI provider',
@@ -876,7 +886,6 @@ const translations = {
     emptyChatSelect: 'Sélectionne ou crée une conversation',
     modelsDropdownTitle: 'Modèles',
     noModelsFound: 'Aucun modèle trouvé',
-    modelBadgeNew: 'Nouveau',
     modelBadgeRecommended: 'Rec.',
     modelBadgeAdvanced: 'Avancé',
     modelFree: 'Gratuit',
@@ -994,6 +1003,12 @@ const translations = {
     openRouterBadRequestHint: 'Vérifiez le modèle et la charge utile.',
     openRouterRateLimited:
       'Vous avez atteint la limite de requêtes. Veuillez patienter un instant.',
+    openRouterInsufficientCredits:
+      'Vous n’avez pas assez de crédits OpenRouter pour cette réponse. Rechargez votre solde ou choisissez un modèle moins cher.',
+    responseTruncated:
+      'La réponse a été coupée à la limite de tokens. Demandez au modèle de continuer.',
+    responseTruncatedEmpty:
+      'Le modèle a épuisé sa limite de tokens en raisonnant sans répondre. Essayez un niveau de raisonnement plus bas.',
     openRouterProviderDown:
       '⚠️ {provider} rencontre des problèmes techniques ({retries} tentatives). Veuillez réessayer dans quelques minutes ou choisir un autre modèle.',
     openRouterDefaultProvider: 'Le fournisseur d’IA',
@@ -1293,7 +1308,6 @@ const translations = {
     emptyChatSelect: 'Wähle eine Unterhaltung oder erstelle eine',
     modelsDropdownTitle: 'Modelle',
     noModelsFound: 'Keine Modelle gefunden',
-    modelBadgeNew: 'Neu',
     modelBadgeRecommended: 'Empf.',
     modelBadgeAdvanced: 'Erweitert',
     modelFree: 'Kostenlos',
@@ -1413,6 +1427,12 @@ const translations = {
     openRouterBadRequest: 'Ungültige Anfrage: {detail}',
     openRouterBadRequestHint: 'Prüfe das Modell und die Nutzdaten.',
     openRouterRateLimited: 'Du hast das Anfragelimit erreicht. Bitte warte einen Moment.',
+    openRouterInsufficientCredits:
+      'Du hast nicht genug OpenRouter-Guthaben für diese Antwort. Lade Guthaben auf oder wähle ein günstigeres Modell.',
+    responseTruncated:
+      'Die Antwort wurde am Token-Limit abgeschnitten. Bitte das Modell, fortzufahren.',
+    responseTruncatedEmpty:
+      'Das Modell hat sein Token-Limit beim Nachdenken aufgebraucht und nicht geantwortet. Versuche eine niedrigere Denkstufe.',
     openRouterProviderDown:
       '⚠️ {provider} hat derzeit technische Probleme ({retries} Versuche). Bitte versuche es in einigen Minuten erneut oder wähle ein anderes Modell.',
     openRouterDefaultProvider: 'Der KI-Anbieter',
@@ -1666,7 +1686,7 @@ const translations = {
 
 export type TranslationKey = keyof typeof translations.es;
 
-export const getInitialLanguage = (): Language => {
+const getInitialLanguage = (): Language => {
   if (typeof window === 'undefined') {
     return 'es';
   }
@@ -1709,17 +1729,44 @@ export const translate = (
 ): string => formatTemplate(translations[language][key], params);
 
 /**
- * Idioma actual a nivel de módulo para código fuera del árbol de React
- * (servicios, hooks con toasts). `App` lo sincroniza cuando cambia el idioma.
+ * Idioma activo como store reactivo. `t()` lo lee para que servicios y hooks
+ * (toasts, errores) traduzcan sin recibir props; los componentes se suscriben
+ * con `useLanguage()` para re-renderizarse al cambiarlo, incluidos los
+ * memoizados.
  */
 let currentLanguage: Language = getInitialLanguage();
+const languageListeners = new Set<() => void>();
+
+const applyDocumentLanguage = (language: Language): void => {
+  if (typeof document !== 'undefined') {
+    document.documentElement.lang = language;
+  }
+};
+
+applyDocumentLanguage(currentLanguage);
 
 export const getCurrentLanguage = (): Language => currentLanguage;
 
+/** Cambia el idioma de la interfaz, lo guarda en este navegador y notifica a los suscriptores. */
 export const setCurrentLanguage = (language: Language): void => {
+  if (language === currentLanguage) {
+    return;
+  }
   currentLanguage = language;
+  writeLocalStorage(LANGUAGE_STORAGE_KEY, language);
+  applyDocumentLanguage(language);
+  languageListeners.forEach((listener) => listener());
 };
 
-/** Traduce con el idioma actual del módulo. Para servicios y hooks sin acceso a props. */
+const subscribeToLanguage = (listener: () => void): (() => void) => {
+  languageListeners.add(listener);
+  return () => languageListeners.delete(listener);
+};
+
+/** Idioma activo; el componente se re-renderiza cuando cambia. */
+export const useLanguage = (): Language =>
+  useSyncExternalStore(subscribeToLanguage, getCurrentLanguage, getCurrentLanguage);
+
+/** Traduce con el idioma activo. */
 export const t = (key: TranslationKey, params?: TranslationParams): string =>
   translate(currentLanguage, key, params);

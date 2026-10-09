@@ -257,6 +257,9 @@ export function createOpenRouterHttpError(
       status
     );
   }
+  if (status === 402) {
+    return new OpenRouterHttpError(t('openRouterInsufficientCredits'), status);
+  }
   if (status === 429) {
     return new OpenRouterHttpError(t('openRouterRateLimited'), status);
   }

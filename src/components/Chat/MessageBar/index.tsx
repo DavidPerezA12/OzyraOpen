@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { SlidersHorizontal } from 'lucide-react';
-import { modelHasCapability } from '../../../config/models';
+import { modelHasCapability } from '../../../models/catalog';
 import { AttachmentButton } from './AttachmentButton';
 import { AttachmentPreview } from './AttachmentPreview';
 import { ChatCustomizationPanel } from './ChatCustomizationPanel';
@@ -13,40 +13,23 @@ import { useMessageInput } from './useMessageInput';
 import { t } from '../../../i18n';
 
 const ChatMessageBar = ({
-  uiState,
-  inputValue,
-  setInputValue,
-  handleSubmit,
-  currentChat,
-  selectedModel,
-  setIsModelDropdownOpen,
-  modelDropdownRef,
-  modelSearchQuery,
-  setModelSearchQuery,
-  enabledModelIds,
-  handleModelSelect,
-  setShowSettings,
-  setShowChatCustomization,
-  currentChatCustomizationInput,
-  setCurrentChatCustomizationInput,
-  toggleChatCustomizationPopup,
-  handleSaveChatCustomization,
-  handleImproveChatCustomization,
+  isDarkMode,
+  isGenerating,
+  hasActiveChat,
+  composer,
   textareaRef,
-  cancelGeneration,
-  uploadedImages,
-  setUploadedImages,
+  onSubmit,
+  onCancel,
+  modelPicker,
+  customization,
 }: ChatMessageBarProps) => {
-  const {
-    isDarkMode,
-    isLoading,
-    isModelDropdownOpen,
-    showChatCustomization,
-    isImprovingChatCustomization,
-  } = uiState;
+  const { inputValue, setInputValue, uploadedImages, setUploadedImages } = composer;
   const uploadInputId = useId();
-  const modelSupportsImages = modelHasCapability(selectedModel, 'images');
-  const modelSupportsReasoningLevels = modelHasCapability(selectedModel, 'reasoningLevels');
+  const modelSupportsImages = modelHasCapability(modelPicker.selectedModel, 'vision');
+  const modelSupportsReasoningLevels = modelHasCapability(
+    modelPicker.selectedModel,
+    'effortControl'
+  );
 
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(false);
   const [reasoningLevel, setReasoningLevel] = useState<ReasoningLevel>('medium');
@@ -60,9 +43,9 @@ const ChatMessageBar = ({
       inputValue,
       setInputValue,
       textareaRef,
-      isLoading,
+      isLoading: isGenerating,
       uploadedImages,
-      handleSubmit,
+      handleSubmit: onSubmit,
       isWebSearchEnabled,
       modelSupportsReasoningLevels,
       reasoningLevel,
@@ -70,20 +53,13 @@ const ChatMessageBar = ({
 
   return (
     <>
-      {showChatCustomization && (
+      {customization.isOpen && (
         <div id="chat-customization-panel">
-          <ChatCustomizationPanel
-            value={currentChatCustomizationInput}
-            setValue={setCurrentChatCustomizationInput}
-            setShowChatCustomization={setShowChatCustomization}
-            handleSaveChatCustomization={handleSaveChatCustomization}
-            handleImproveChatCustomization={handleImproveChatCustomization}
-            isImprovingChatCustomization={isImprovingChatCustomization}
-          />
+          <ChatCustomizationPanel customization={customization} />
         </div>
       )}
 
-      <div className="composer-wrap relative flex flex-col" aria-busy={isLoading}>
+      <div className="composer-wrap relative flex flex-col" aria-busy={isGenerating}>
         {isPreviewOpen && uploadedImages.length > 0 && (
           <div className="px-3 pt-3">
             <AttachmentPreview
@@ -140,28 +116,18 @@ const ChatMessageBar = ({
 
           <div className="composer-toolbar">
             <div className="composer-toolbar-group">
-              <ModelSelectorInline
-                selectedModel={selectedModel}
-                isModelDropdownOpen={isModelDropdownOpen}
-                setIsModelDropdownOpen={setIsModelDropdownOpen}
-                modelDropdownRef={modelDropdownRef}
-                modelSearchQuery={modelSearchQuery}
-                setModelSearchQuery={setModelSearchQuery}
-                enabledModelIds={enabledModelIds}
-                handleModelSelect={handleModelSelect}
-                setShowSettings={setShowSettings}
-              />
+              <ModelSelectorInline {...modelPicker} />
 
               {modelSupportsReasoningLevels && (
                 <ReasoningLevelSelector
-                  isLoading={isLoading}
+                  isLoading={isGenerating}
                   reasoningLevel={reasoningLevel}
                   setReasoningLevel={setReasoningLevel}
                 />
               )}
 
               <WebSearchToggle
-                isLoading={isLoading}
+                isLoading={isGenerating}
                 isWebSearchEnabled={isWebSearchEnabled}
                 onToggleWebSearch={() => setIsWebSearchEnabled((prev) => !prev)}
               />
@@ -169,16 +135,16 @@ const ChatMessageBar = ({
               <button
                 type="button"
                 onClick={() => {
-                  if (!isLoading && currentChat) {
-                    toggleChatCustomizationPopup();
+                  if (!isGenerating && hasActiveChat) {
+                    customization.toggle();
                   }
                 }}
-                className={`composer-icon-btn ${showChatCustomization ? 'active' : ''} ${isLoading || !currentChat ? 'is-disabled' : ''}`}
-                title={currentChat ? t('customizeChat') : t('customizeChatDisabled')}
-                aria-label={currentChat ? t('customizeChat') : t('customizeChatDisabled')}
-                aria-expanded={showChatCustomization}
+                className={`composer-icon-btn ${customization.isOpen ? 'active' : ''} ${isGenerating || !hasActiveChat ? 'is-disabled' : ''}`}
+                title={hasActiveChat ? t('customizeChat') : t('customizeChatDisabled')}
+                aria-label={hasActiveChat ? t('customizeChat') : t('customizeChatDisabled')}
+                aria-expanded={customization.isOpen}
                 aria-controls="chat-customization-panel"
-                aria-disabled={isLoading || !currentChat}
+                aria-disabled={isGenerating || !hasActiveChat}
               >
                 <SlidersHorizontal size={15} />
               </button>
@@ -188,15 +154,15 @@ const ChatMessageBar = ({
               {modelSupportsImages && (
                 <AttachmentButton
                   inputId={`image-upload-${uploadInputId}`}
-                  isLoading={isLoading}
+                  isLoading={isGenerating}
                   onImageUpload={handleImageUpload}
                 />
               )}
 
               <SendButton
-                isLoading={isLoading}
+                isLoading={isGenerating}
                 canSubmit={canSubmit}
-                cancelGeneration={cancelGeneration}
+                cancelGeneration={onCancel}
               />
             </div>
           </div>

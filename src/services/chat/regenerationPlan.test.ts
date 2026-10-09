@@ -52,7 +52,6 @@ describe('buildRegenerationPlan', () => {
       userMessage: messageWithImages,
       updatedChat: { messages: [chat.messages[0], chat.messages[1], messageWithImages] },
       removedMessageIds: ['a2'],
-      attachmentsOverride: [{ url: 'blob:image', contentType: 'image/jpeg', data: 'abc' }],
     });
   });
 
@@ -60,5 +59,33 @@ describe('buildRegenerationPlan', () => {
     const chat = baseChat([userMessage('u1', 'hola')]);
 
     expect(buildRegenerationPlan(chat)).toBeNull();
+  });
+
+  it('resends a user message, dropping everything after it', () => {
+    const chat = baseChat([
+      userMessage('u1', 'hola'),
+      assistantMessage('a1', 'respuesta'),
+      userMessage('u2', 'otra'),
+      assistantMessage('a2', 'respuesta 2'),
+    ]);
+
+    const plan = buildRegenerationPlan(chat, 'u1');
+
+    expect(plan?.userMessage.id).toBe('u1');
+    expect(plan?.updatedChat.messages.map((message) => message.id)).toEqual(['u1']);
+    expect(plan?.removedMessageIds).toEqual(['a1', 'u2', 'a2']);
+  });
+
+  it('resends the last user message even when it has no response yet', () => {
+    const chat = baseChat([userMessage('u1', 'hola')]);
+
+    const plan = buildRegenerationPlan(chat, 'u1');
+
+    expect(plan?.userMessage.id).toBe('u1');
+    expect(plan?.removedMessageIds).toEqual([]);
+  });
+
+  it('returns null for unknown message ids', () => {
+    expect(buildRegenerationPlan(baseChat([userMessage('u1', 'hola')]), 'missing')).toBeNull();
   });
 });

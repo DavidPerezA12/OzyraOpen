@@ -1,31 +1,36 @@
-import type { Chat, Message, UploadedImage } from '../../types';
+import type { Chat, Message } from '../../types';
 import { findPreviousUserMessageIndex } from '../../utils/messageOperations';
 
-const getImageAttachmentsForResubmit = (message: Message): UploadedImage[] =>
-  message.attachments?.flatMap((attachment) =>
-    attachment.type === 'image'
-      ? [
-          {
-            url: attachment.url,
-            contentType: attachment.contentType ?? 'image/png',
-            data: attachment.data,
-          },
-        ]
-      : []
-  ) ?? [];
-
 export interface RegenerationPlan {
+  /** Mensaje de usuario que se vuelve a responder (se conserva tal cual) */
   readonly userMessage: Message;
+  /** Chat truncado hasta ese mensaje inclusive */
   readonly updatedChat: Chat;
   readonly removedMessageIds: string[];
-  readonly attachmentsOverride: UploadedImage[];
 }
 
+/**
+ * Plan para volver a responder un mensaje de usuario.
+ *
+ * - `messageId` de un mensaje de usuario ("Reenviar"): se responde ese mensaje,
+ *   incluso si es el último y aún no tiene respuesta (p. ej. tras un error).
+ * - `messageId` de un asistente ("Regenerar"): se responde el mensaje de usuario
+ *   que lo precede.
+ * - Sin `messageId`: se regenera la última respuesta, que debe existir.
+ */
 export const buildRegenerationPlan = (chat: Chat, messageId?: string): RegenerationPlan | null => {
   const messages = [...chat.messages];
-  const userMessageIndex = findPreviousUserMessageIndex(messages, messageId);
+  const target = messageId ? messages.find((message) => message.id === messageId) : undefined;
+  const isResendingUserMessage = target?.role === 'user';
 
-  if (userMessageIndex === -1 || userMessageIndex === messages.length - 1) {
+  const userMessageIndex = isResendingUserMessage
+    ? messages.indexOf(target)
+    : findPreviousUserMessageIndex(messages, messageId);
+
+  if (userMessageIndex === -1) {
+    return null;
+  }
+  if (!isResendingUserMessage && userMessageIndex === messages.length - 1) {
     return null;
   }
 
@@ -37,6 +42,5 @@ export const buildRegenerationPlan = (chat: Chat, messageId?: string): Regenerat
     userMessage,
     updatedChat: { ...chat, messages: messages.slice(0, userMessageIndex + 1) },
     removedMessageIds: messages.slice(userMessageIndex + 1).map((message) => message.id),
-    attachmentsOverride: getImageAttachmentsForResubmit(userMessage),
   };
 };

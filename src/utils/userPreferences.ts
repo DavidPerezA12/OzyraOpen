@@ -2,14 +2,26 @@
  * Utilidades para manejo de preferencias de usuario
  */
 
-import { getProfile, upsertProfile } from './db';
-import { writeLocalStorage } from './browserStorage';
+import { LOCAL_USER_ID, upsertProfile } from './db';
+import { readLocalStorage, writeLocalStorage } from './browserStorage';
 
 export interface UserPreferences {
-  name: string;
-  knowledge: string;
-  traits: string;
-  additionalInfo: string;
+  readonly name: string;
+  readonly knowledge: string;
+  readonly traits: string;
+  readonly additionalInfo: string;
+}
+
+/**
+ * Lee las preferencias guardadas en localStorage (fuente de verdad en el arranque)
+ */
+export function readStoredPreferences(): UserPreferences {
+  return {
+    name: readLocalStorage('userName') ?? '',
+    knowledge: readLocalStorage('userKnowledge') ?? '',
+    traits: readLocalStorage('userTraits') ?? '',
+    additionalInfo: readLocalStorage('userAdditionalInfo') ?? '',
+  };
 }
 
 /**
@@ -23,17 +35,13 @@ export function savePreferencesToLocalStorage(prefs: UserPreferences): void {
 }
 
 /**
- * Actualiza preferencias en la base de datos
+ * Refleja las preferencias en el perfil local de IndexedDB (se incluye en el
+ * snapshot de carpeta local y en las exportaciones).
  */
-export async function updatePreferencesInDatabase(
-  userId: string,
-  prefs: UserPreferences
-): Promise<void> {
-  const existing = await getProfile(userId);
+export async function updatePreferencesInDatabase(prefs: UserPreferences): Promise<void> {
   await upsertProfile({
-    id: userId,
-    email: existing?.email ?? '',
-    ...existing,
+    id: LOCAL_USER_ID,
+    email: '',
     name: prefs.name,
     knowledge: prefs.knowledge,
     traits: prefs.traits,

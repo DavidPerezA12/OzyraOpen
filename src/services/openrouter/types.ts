@@ -1,5 +1,7 @@
 import type { MessageAnnotation } from '../../types';
 
+export type ReasoningLevel = 'low' | 'medium' | 'high';
+
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
@@ -20,10 +22,14 @@ export interface ChatCompletionRequest {
   temperature?: number;
   reasoning?: {
     enabled?: boolean;
-    effort?: 'low' | 'medium' | 'high';
+    effort?: ReasoningLevel;
     max_tokens?: number;
     exclude?: boolean;
   };
+  /** Prompt caching automático (Anthropic): breakpoint en el último bloque cacheable */
+  cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
+  /** Clave de sticky routing de OpenRouter para reutilizar el cache del proveedor */
+  session_id?: string;
   tools?: Array<
     | {
         type: 'function';
@@ -83,9 +89,29 @@ export interface OpenRouterConfig {
   appTitle: string;
 }
 
+/** Uso de tokens normalizado a partir del objeto `usage` de OpenRouter */
+export interface CompletionUsage {
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  /** Tokens del prompt servidos desde el cache del proveedor */
+  readonly cachedTokens: number;
+  /** Tokens escritos en cache (solo proveedores con cache explícito) */
+  readonly cacheWriteTokens: number;
+  readonly reasoningTokens: number;
+  /** Coste total en créditos, si OpenRouter lo informa */
+  readonly cost?: number;
+}
+
+export interface StreamMetadata {
+  readonly finishReason?: string;
+  readonly usage?: CompletionUsage;
+}
+
 export type StreamCallbacks = {
   onChunk: (chunk: string) => void;
   onComplete: (finalText?: string) => void;
   onError: (error: Error) => void;
   onAnnotations?: (annotations: MessageAnnotation[]) => void;
+  /** Se invoca una vez, justo antes de `onComplete`, con el motivo de fin y el uso */
+  onMetadata?: (metadata: StreamMetadata) => void;
 };

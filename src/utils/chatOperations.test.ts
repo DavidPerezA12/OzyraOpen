@@ -51,9 +51,8 @@ describe('chatOperations', () => {
     vi.restoreAllMocks();
   });
 
-  it('skips title generation without a local profile or without text', async () => {
-    await expect(generateChatTitle('Hola', null)).resolves.toBeNull();
-    await expect(generateChatTitle('   ', 'local-user')).resolves.toBeNull();
+  it('skips title generation without text', async () => {
+    await expect(generateChatTitle('   ')).resolves.toBeNull();
 
     expect(chatService.createChatCompletion).not.toHaveBeenCalled();
   });
@@ -63,7 +62,7 @@ describe('chatOperations', () => {
       .mockRejectedValueOnce(new Error('provider unavailable'))
       .mockResolvedValueOnce(completion(' "Plan de proyecto." '));
 
-    await expect(generateChatTitle('Necesito ordenar el roadmap', 'local-user')).resolves.toBe(
+    await expect(generateChatTitle('Necesito ordenar el roadmap')).resolves.toBe(
       'Plan de proyecto'
     );
 
@@ -91,7 +90,7 @@ describe('chatOperations', () => {
   it('returns null when every title model fails', async () => {
     vi.mocked(chatService.createChatCompletion).mockRejectedValue(new Error('all down'));
 
-    await expect(generateChatTitle('Tema', 'local-user')).resolves.toBeNull();
+    await expect(generateChatTitle('Tema')).resolves.toBeNull();
 
     expect(chatService.createChatCompletion).toHaveBeenCalledTimes(4);
     expect(console.error).toHaveBeenCalledTimes(1);
@@ -109,10 +108,10 @@ describe('chatOperations', () => {
   it('builds system messages from preferences and chat customization', () => {
     expect(
       prepareSystemMessages(chat({ customizationPrompt: 'Responde breve.' }), {
-        userName: 'David',
-        userKnowledge: 'TypeScript',
-        userTraits: 'Directo',
-        userAdditionalInfo: 'Prefiere español',
+        name: 'David',
+        knowledge: 'TypeScript',
+        traits: 'Directo',
+        additionalInfo: 'Prefiere español',
       })
     ).toEqual([
       {

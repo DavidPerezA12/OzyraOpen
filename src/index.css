@@ -1460,11 +1460,6 @@ html[data-theme='light'] .mli-chip svg,
   letter-spacing: 0.05em;
   flex-shrink: 0;
 }
-.mli-badge--new {
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-strong);
-}
 .mli-badge--rec {
   background: var(--bg-hover);
   color: var(--text-secondary);

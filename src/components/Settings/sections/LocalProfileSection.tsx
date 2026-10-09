@@ -11,12 +11,7 @@ import {
 } from 'lucide-react';
 import React, { useEffect, useReducer, useRef } from 'react';
 import toast from 'react-hot-toast';
-import {
-  languageOptions,
-  type Language,
-  type TranslationKey,
-  type TranslationParams,
-} from '../../../i18n';
+import { languageOptions, setCurrentLanguage, t, useLanguage } from '../../../i18n';
 import {
   getStoredOpenRouterApiKey,
   saveOpenRouterApiKey,
@@ -29,14 +24,6 @@ import {
   writeLocalFolderSnapshot,
 } from '../../../utils/localFolderSync';
 import { logger } from '../../../utils/logger';
-
-interface LocalProfileSectionProps {
-  readonly isDarkMode: boolean;
-  readonly userName: string;
-  readonly language: Language;
-  readonly setLanguage: (language: Language) => void;
-  readonly t: (key: TranslationKey, params?: TranslationParams) => string;
-}
 
 interface LocalProfileState {
   readonly directoryHandle: FileSystemDirectoryHandle | null;
@@ -64,7 +51,8 @@ const localProfileReducer = (
   patch: Partial<LocalProfileState>
 ): LocalProfileState => ({ ...state, ...patch });
 
-const LocalProfileSection: React.FC<LocalProfileSectionProps> = ({ language, setLanguage, t }) => {
+const LocalProfileSection: React.FC = () => {
+  const language = useLanguage();
   const folderSyncSupported = isLocalFolderSyncSupported();
   const [localProfileState, updateLocalProfileState] = useReducer(
     localProfileReducer,
@@ -290,7 +278,7 @@ const LocalProfileSection: React.FC<LocalProfileSectionProps> = ({ language, set
                       role="option"
                       aria-selected={isSelected}
                       onClick={() => {
-                        setLanguage(option.code);
+                        setCurrentLanguage(option.code);
                         updateLocalProfileState({ isLangDropdownOpen: false });
                       }}
                       className={`local-profile-language-option ${isSelected ? 'local-profile-language-option--selected' : ''}`}

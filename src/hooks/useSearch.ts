@@ -108,7 +108,10 @@ const MAX_HISTORY_ITEMS = 10;
 /**
  * Hook de búsqueda avanzada
  */
-export function useSearch(chats: Chat[], favorites: Set<string> = new Set()): UseSearchReturn {
+export function useSearch(
+  chats: readonly Chat[],
+  favorites: Set<string> = new Set()
+): UseSearchReturn {
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<SearchFilters>({});
   const [searchHistory, setSearchHistory] = useState<string[]>(() => {

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { modelHasCapability } from '../../config/models';
+import { modelHasCapability } from '../../models/catalog';
 import { t } from '../../i18n';
-import type { Chat, Message, ModelInfo } from '../../types';
+import type { Chat, Message } from '../../types';
 import { readLocalStorage } from '../../utils/browserStorage';
 import { ChatMessageItem } from './ChatMessageItem';
 
@@ -9,8 +9,6 @@ interface ChatContainerProps {
   readonly currentChat: Chat | null;
   readonly isDarkMode: boolean;
   readonly isLoading: boolean;
-  readonly partialResponse: string | null;
-  readonly streamingComplete: boolean;
   readonly selectedModel: string;
   readonly editingMessageId: string | null;
   readonly editingContent: string;
@@ -20,7 +18,6 @@ interface ChatContainerProps {
   readonly cancelMessageEdit: () => void;
   readonly regenerateResponse: (messageId?: string) => void;
   readonly setEditingContent: (content: string) => void;
-  readonly availableModels: readonly ModelInfo[];
 }
 
 const getInitialShowThinking = (): boolean => {
@@ -40,7 +37,6 @@ interface ChatMessageRowProps {
   readonly supportsReasoning: boolean;
   readonly editingMessageId: string | null;
   readonly editingContent: string;
-  readonly availableModels: readonly ModelInfo[];
   readonly copyToClipboard: (text: string) => void;
   readonly startEditingMessage: (message: Message) => void;
   readonly saveMessageEdit: (messageId: string) => void;
@@ -98,8 +94,6 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
   currentChat,
   isDarkMode,
   isLoading,
-  partialResponse,
-  streamingComplete,
   selectedModel,
   editingMessageId,
   editingContent,
@@ -109,7 +103,6 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
   cancelMessageEdit,
   regenerateResponse,
   setEditingContent,
-  availableModels,
 }) => {
   const copiedMessageTimeoutRef = useRef<number | null>(null);
   const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
@@ -158,16 +151,17 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
     [selectedModel]
   );
 
-  const lastAssistantId = useMemo(() => {
+  const lastAssistantMessage = useMemo(() => {
     const messages = currentChat?.messages ?? [];
     for (let index = messages.length - 1; index >= 0; index--) {
       const message = messages[index];
       if (message?.role === 'assistant') {
-        return message.id;
+        return message;
       }
     }
     return null;
   }, [currentChat?.messages]);
+  const lastAssistantId = lastAssistantMessage?.id ?? null;
 
   const lastMessageId = useMemo(() => {
     const messages = currentChat?.messages ?? [];
@@ -216,9 +210,9 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-4 space-y-8 pb-44">
-      {!streamingComplete && (
+      {isLoading && (
         <div aria-live="polite" className="sr-only">
-          {partialResponse || ''}
+          {lastAssistantMessage?.content ?? ''}
         </div>
       )}
 
@@ -240,7 +234,6 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
             supportsReasoning={messageSupportsReasoning(message)}
             editingMessageId={editingMessageId}
             editingContent={editingContent}
-            availableModels={availableModels}
             copyToClipboard={copyToClipboard}
             startEditingMessage={startEditingMessage}
             saveMessageEdit={saveMessageEdit}

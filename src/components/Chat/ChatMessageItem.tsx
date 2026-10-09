@@ -9,16 +9,13 @@ import {
   X as XIcon,
 } from 'lucide-react';
 import React, { Suspense } from 'react';
-import type { Message, ModelInfo } from '../../types';
+import { getModelInfo, useModelCatalog } from '../../models/catalog';
+import type { Message } from '../../types';
 import { getSafeHostname, isSafeLinkHref } from '../../utils/safeUrl';
-import {
-  GroundedSegmentsIndicator,
-  MessageImages,
-  SearchQueriesIndicator,
-} from './MessageComponents';
+import { MessageImages, SearchQueriesIndicator } from './MessageComponents';
 import { getConfidenceBadgeStyles } from './styles';
 import { ThinkingContent } from './ThinkingContent';
-import { t } from '../../i18n';
+import { t, useLanguage } from '../../i18n';
 
 const MAX_MESSAGE_LENGTH = 500;
 
@@ -48,7 +45,6 @@ interface ChatMessageItemProps {
   };
   editingMessageId: string | null;
   editingContent: string;
-  availableModels: readonly ModelInfo[];
   copyToClipboard: (text: string) => void;
   startEditingMessage: (message: Message) => void;
   saveMessageEdit: (messageId: string) => void;
@@ -65,7 +61,6 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = React.memo(
     presentation,
     editingMessageId,
     editingContent,
-    availableModels,
     copyToClipboard,
     startEditingMessage,
     saveMessageEdit,
@@ -85,8 +80,11 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = React.memo(
       showThinking,
       supportsReasoning,
     } = presentation;
-    const modelInfo = availableModels.find((model) => model.id === message.model);
-    const ModelIcon = modelInfo?.icon || Bot;
+    // Suscripciones explícitas: el memo no ve cambios de idioma ni de catálogo.
+    useLanguage();
+    useModelCatalog();
+    const modelInfo = message.model ? getModelInfo(message.model) : undefined;
+    const ModelIcon = modelInfo?.icon ?? Bot;
     const actionVisibility = isCopied ? 'copy-actions-visible' : '';
 
     return (
@@ -133,13 +131,6 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = React.memo(
               {message.role === 'assistant' && Boolean(message.searchQueries?.length) && (
                 <SearchQueriesIndicator
                   queries={message.searchQueries ?? []}
-                  isDarkMode={isDarkMode}
-                />
-              )}
-
-              {message.role === 'assistant' && Boolean(message.groundedSegments?.length) && (
-                <GroundedSegmentsIndicator
-                  segments={message.groundedSegments ?? []}
                   isDarkMode={isDarkMode}
                 />
               )}

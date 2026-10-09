@@ -14,7 +14,7 @@ import { getCurrentLanguage, t } from '../../i18n';
 interface AdvancedSearchProps {
   isOpen: boolean;
   onClose: () => void;
-  chats?: Chat[];
+  chats?: readonly Chat[];
   favorites?: Set<string>;
   onToggleFavorite?: (chatId: string) => void;
   onSelectChat?: (chatId: string) => void;

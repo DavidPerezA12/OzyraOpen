@@ -1,7 +1,14 @@
-import { useCallback, type Dispatch, type FormEvent, type SetStateAction } from 'react';
+import {
+  useCallback,
+  useRef,
+  useState,
+  type Dispatch,
+  type FormEvent,
+  type SetStateAction,
+} from 'react';
 import toast from 'react-hot-toast';
 import { t } from '../i18n';
-import { availableModels, recordModelUsage } from '../config/models';
+import { recordModelUsage } from '../models/usage';
 import { runAssistantStream } from '../services/chat/assistantStreamRunner';
 import {
   applyAssistantDraftUpdate,
@@ -15,555 +22,445 @@ import {
   createAssistantDraft,
   createUserMessage,
   getStreamRequestConfig,
-  type ChatPreferencesSnapshot,
+  type ReasoningLevel,
   type SubmitChatOptions,
 } from '../services/chat/generationPipeline';
-import { createLocalChat, updateMessageInChat, upsertChat } from '../services/chat/chatState';
+import { createLocalChat, updateMessageInChat } from '../services/chat/chatState';
 import {
   persistChatIfNeeded,
-  saveAssistantMessageToLocalHistory,
   saveGeneratedTitleToLocalHistory,
-  saveUserMessageToLocalHistory,
+  saveMessageToLocalHistory,
 } from '../services/chat/localChatPersistence';
 import { buildRegenerationPlan } from '../services/chat/regenerationPlan';
 import { resolveWebSearchForMessage } from '../services/chat/webSearchResolution';
-import type { Chat, ChatGenerationState, Message, ModelTier, UploadedImage } from '../types';
+import type { ChatStore } from '../state/chatStore';
+import type { Chat, Message, UploadedImage } from '../types';
 import { deleteMessagesByIds } from '../utils/db';
 import { generateChatTitle } from '../utils/chatOperations';
 import { isAbortError } from '../utils/errors';
-import { useChatGenerationRegistry } from './useChatGenerationRegistry';
 import { logger } from '../utils/logger';
+import type { UserPreferences } from '../utils/userPreferences';
 
-type IncrementUsage = (modelTier: ModelTier, userId: string | null) => Promise<void>;
+export interface ComposerState {
+  readonly inputValue: string;
+  readonly setInputValue: (value: string) => void;
+  readonly uploadedImages: readonly UploadedImage[];
+  readonly setUploadedImages: Dispatch<SetStateAction<UploadedImage[]>>;
+}
 
 export interface UseChatGenerationParams {
-  readonly userId: string | null;
-  readonly chats: Chat[];
-  readonly setChats: Dispatch<SetStateAction<Chat[]>>;
-  readonly currentChat: Chat | null;
-  readonly setCurrentChat: Dispatch<SetStateAction<Chat | null>>;
+  readonly store: ChatStore;
   readonly selectedModel: string;
-  readonly inputValue: string;
-  readonly setInputValue: Dispatch<SetStateAction<string>>;
-  readonly uploadedImages: UploadedImage[];
-  readonly setUploadedImages: Dispatch<SetStateAction<UploadedImage[]>>;
-  readonly preferences: ChatPreferencesSnapshot;
-  readonly incrementUsage: IncrementUsage;
+  readonly composer: ComposerState;
+  readonly preferences: UserPreferences;
 }
 
-export interface UseChatGenerationReturn {
-  readonly chatGenerationStates: Record<string, ChatGenerationState>;
-  readonly abortControllers: Record<string, AbortController>;
-  readonly generatingChatIds: string[];
-  readonly partialResponse: string | null;
-  readonly streamingComplete: boolean;
-  readonly isLoading: boolean;
-  readonly handleSubmit: (event: FormEvent, options?: SubmitChatOptions) => Promise<void>;
-  readonly cancelGeneration: (chatId?: string) => void;
-  readonly regenerateResponse: (messageId?: string) => Promise<void>;
+interface ActiveGeneration {
+  readonly controller: AbortController;
+  /** Borrador del asistente de esta generación (aún no existe mientras se prepara) */
+  draftMessageId?: string;
 }
 
-const getModelTier = (modelId: string): ModelTier => {
-  const modelInfo = availableModels.find((model) => model.id === modelId);
-  return modelInfo?.tier ?? 'standard';
+const createAbortError = (): DOMException => new DOMException('Generation cancelled', 'AbortError');
+
+const throwIfAborted = (signal: AbortSignal): void => {
+  if (signal.aborted) {
+    throw createAbortError();
+  }
 };
 
-export function useChatGeneration({
-  userId,
-  chats,
-  setChats,
-  currentChat,
-  setCurrentChat,
-  selectedModel,
-  inputValue,
-  setInputValue,
-  uploadedImages,
-  setUploadedImages,
-  preferences,
-  incrementUsage,
-}: UseChatGenerationParams): UseChatGenerationReturn {
-  const {
-    chatGenerationStates,
-    abortControllers,
-    generatingChatIds,
-    partialResponse,
-    streamingComplete,
-    isLoading,
-    chatsRef,
-    currentChatRef,
-    abortControllersRef,
-    generationStatesRef,
-    submittingChatIds,
-    activeFlushTimersRef,
-    activeStreamRunIdsRef,
-    updateChatGenerationState,
-    clearChatGenerationState,
-    setAbortControllerForChat,
-    removeAbortControllerForChat,
-  } = useChatGenerationRegistry({ chats, currentChat });
+const ensureOpenRouterKey = (): boolean => {
+  if (getStoredOpenRouterApiKey()) {
+    return true;
+  }
+  toast.error(t('missingOpenRouterKey'));
+  return false;
+};
 
-  const createNewChat = useCallback((): Chat => createLocalChat(selectedModel), [selectedModel]);
-
-  const ensureOpenRouterKey = useCallback((): boolean => {
-    if (getStoredOpenRouterApiKey()) {
-      return true;
+const highlightMessage = (messageId: string): void => {
+  window.setTimeout(() => {
+    const element = document.getElementById(`message-${messageId}`);
+    if (element) {
+      element.classList.add('regenerating-pulse');
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      window.setTimeout(() => element.classList.remove('regenerating-pulse'), 2000);
     }
+  }, 100);
+};
 
-    toast.error(t('missingOpenRouterKey'));
-    return false;
+/**
+ * Envío, streaming, cancelación y regeneración de respuestas.
+ *
+ * Cada chat puede tener una generación activa a la vez (varias en paralelo
+ * entre chats). Todo el estado de los chats vive en el `ChatStore`: el hook
+ * solo guarda qué generaciones están en curso.
+ */
+export function useChatGeneration({
+  store,
+  selectedModel,
+  composer,
+  preferences,
+}: UseChatGenerationParams) {
+  const generationsRef = useRef(new Map<string, ActiveGeneration>());
+  const [generatingChatIds, setGeneratingChatIds] = useState<readonly string[]>([]);
+
+  const syncGeneratingIds = useCallback(() => {
+    setGeneratingChatIds([...generationsRef.current.keys()]);
   }, []);
+
+  const startGeneration = useCallback(
+    (chatId: string): ActiveGeneration => {
+      const generation: ActiveGeneration = { controller: new AbortController() };
+      generationsRef.current.set(chatId, generation);
+      syncGeneratingIds();
+      return generation;
+    },
+    [syncGeneratingIds]
+  );
+
+  const finishGeneration = useCallback(
+    (chatId: string, generation: ActiveGeneration) => {
+      // Solo la generación que sigue registrada puede limpiarse a sí misma.
+      if (generationsRef.current.get(chatId) === generation) {
+        generationsRef.current.delete(chatId);
+        syncGeneratingIds();
+      }
+    },
+    [syncGeneratingIds]
+  );
 
   const cancelGeneration = useCallback(
     (chatId?: string) => {
-      const targetChatId = chatId || currentChatRef.current?.id;
-
-      if (!targetChatId || !abortControllersRef.current[targetChatId]) {
+      const targetChatId = chatId ?? store.getState().currentChatId;
+      const generation = targetChatId ? generationsRef.current.get(targetChatId) : undefined;
+      if (!targetChatId || !generation) {
         return;
       }
 
-      abortControllersRef.current[targetChatId].abort();
-      const activeFlushTimer = activeFlushTimersRef.current[targetChatId];
-      if (activeFlushTimer !== undefined) {
-        window.cancelAnimationFrame(activeFlushTimer);
-        delete activeFlushTimersRef.current[targetChatId];
-      }
-      delete activeStreamRunIdsRef.current[targetChatId];
-      submittingChatIds.delete(targetChatId);
-      removeAbortControllerForChat(targetChatId);
+      generation.controller.abort();
+      finishGeneration(targetChatId, generation);
 
-      updateChatGenerationState(targetChatId, {
-        partialResponse: null,
-        streamingComplete: true,
-        thinkingProcessContent: null,
-        isReasoning: false,
-      });
-
-      const generatingChat = chatsRef.current.find((chat) => chat.id === targetChatId);
-      const chatState = generationStatesRef.current[targetChatId];
-      if (!generatingChat) {
+      const chat = store.getChat(targetChatId);
+      const draft = chat?.messages.find((message) => message.id === generation.draftMessageId);
+      if (!chat || !draft) {
         return;
       }
 
-      const lastMessage = generatingChat.messages[generatingChat.messages.length - 1];
-      if (!lastMessage || lastMessage.role !== 'assistant') {
-        return;
-      }
-
-      const partial = chatState?.partialResponse || lastMessage.content || '';
-      let interruptedMessage: Message | null = null;
-      const updatedChat = updateMessageInChat(generatingChat, lastMessage.id, (message) => {
-        interruptedMessage = markAssistantMessageInterrupted({
-          message,
-          partialResponse: partial,
-          thinkingContent: chatState?.thinkingProcessContent,
-        });
-        return interruptedMessage;
-      });
-
-      if (currentChatRef.current?.id === targetChatId) {
-        setCurrentChat(updatedChat);
-      }
-      setChats((prevChats) => upsertChat(prevChats, updatedChat));
-
-      if (userId && generatingChat.isPersisted && interruptedMessage) {
-        void saveAssistantMessageToLocalHistory({
-          message: interruptedMessage,
-          chatId: targetChatId,
-          userId,
-        }).catch((error) => {
+      const interruptedMessage = markAssistantMessageInterrupted({ message: draft });
+      store.updateChat(targetChatId, (current) =>
+        updateMessageInChat(current, draft.id, () => interruptedMessage)
+      );
+      if (chat.isPersisted) {
+        saveMessageToLocalHistory(interruptedMessage, targetChatId).catch((error: unknown) => {
           logger.error('Error al guardar cancelación en historial local:', error);
         });
       }
     },
-    [
-      activeFlushTimersRef,
-      activeStreamRunIdsRef,
-      abortControllersRef,
-      chatsRef,
-      currentChatRef,
-      generationStatesRef,
-      removeAbortControllerForChat,
-      setChats,
-      setCurrentChat,
-      submittingChatIds,
-      updateChatGenerationState,
-      userId,
-    ]
+    [finishGeneration, store]
   );
 
-  const generateChatTitleForChat = useCallback(
-    async (chat: Chat, userInput: string) => {
-      const generatedTitle = await generateChatTitle(userInput, userId);
-
-      if (!generatedTitle) {
+  const generateTitle = useCallback(
+    async (chatId: string, userInput: string) => {
+      const title = await generateChatTitle(userInput);
+      if (!title || !store.getChat(chatId)) {
         return;
       }
-
-      setChats((prevChats) =>
-        prevChats.map((candidate) =>
-          candidate.id === chat.id ? { ...candidate, title: generatedTitle } : candidate
-        )
-      );
-      setCurrentChat((prevChat) =>
-        prevChat && prevChat.id === chat.id ? { ...prevChat, title: generatedTitle } : prevChat
-      );
-
+      store.updateChat(chatId, (chat) => ({ ...chat, title }));
       try {
-        await saveGeneratedTitleToLocalHistory({
-          chatId: chat.id,
-          title: generatedTitle,
-          userId,
-        });
+        await saveGeneratedTitleToLocalHistory(chatId, title);
       } catch (error) {
         logger.error('Error al guardar título generado en historial local:', error);
       }
     },
-    [setChats, setCurrentChat, userId]
+    [store]
   );
 
-  const submitChatMessage = useCallback(
-    async (options?: SubmitChatOptions) => {
-      const submittedContent = options?.contentOverride ?? inputValue;
-      const submittedImages =
-        options?.attachmentsOverride ?? (options?.contentOverride ? [] : [...uploadedImages]);
-      const submittedModel = selectedModel;
+  /**
+   * Genera la respuesta del asistente para `chat`, cuyo último mensaje es el
+   * mensaje de usuario a responder (nuevo o, al regenerar, el existente).
+   */
+  const generateResponse = useCallback(
+    async ({
+      chat,
+      userMessage,
+      model,
+      reasoningLevel,
+      generation,
+    }: {
+      readonly chat: Chat;
+      readonly userMessage: Message;
+      readonly model: string;
+      readonly reasoningLevel?: ReasoningLevel;
+      readonly generation: ActiveGeneration;
+    }) => {
+      const chatId = chat.id;
+      const { signal } = generation.controller;
+      const useWebSearch = Boolean(userMessage.useWebSearch);
 
-      if (!submittedContent.trim() && submittedImages.length === 0) {
-        return;
+      const webSearch = await resolveWebSearchForMessage(userMessage.content, useWebSearch);
+      throwIfAborted(signal);
+      if (webSearch.fallbackMessage) {
+        toast.error(webSearch.fallbackMessage);
       }
 
-      if (!ensureOpenRouterKey()) {
-        return;
-      }
-
-      const createdThisSubmit = !options?.chatSnapshot && !currentChatRef.current;
-      let chatToUse: Chat = options?.chatSnapshot ?? currentChatRef.current ?? createNewChat();
-      const chatId = chatToUse.id;
-
-      if (submittingChatIds.has(chatId)) {
-        logger.warn('[handleSubmit] Ignorado: ya hay un submit en progreso para este chat');
-        return;
-      }
-      submittingChatIds.add(chatId);
-
-      if (abortControllersRef.current[chatId]) {
-        cancelGeneration(chatId);
-        submittingChatIds.delete(chatId);
-        return;
-      }
-
-      const controller = new AbortController();
-      setAbortControllerForChat(chatId, controller);
-
-      if (!chatToUse.isPersisted && userId) {
-        try {
-          const persistedChat = await persistChatIfNeeded({ chat: chatToUse, userId });
-          setCurrentChat(persistedChat);
-          setChats((prevChats) => upsertChat(prevChats, persistedChat));
-          chatToUse = persistedChat;
-        } catch (dbError) {
-          logger.error('[handleSubmit] Error al crear nuevo chat local:', dbError);
-          toast.error(t('newChatError'));
-          submittingChatIds.delete(chatId);
-          removeAbortControllerForChat(chatId);
-          if (createdThisSubmit) {
-            setChats((prevChats) => prevChats.filter((chat) => chat.id !== chatId));
-            setCurrentChat(null);
-          }
-          return;
-        }
-      }
-
-      try {
-        updateChatGenerationState(chatId, {
-          streamingComplete: false,
-          partialResponse: null,
-          thinkingProcessContent: null,
-          isReasoning: false,
-        });
-
-        const useWebSearch = Boolean(options?.useWebSearch);
-        const userMessage = createUserMessage({
-          content: submittedContent,
-          images: submittedImages,
-          model: submittedModel,
-          useWebSearch,
-        });
-        const updatedChat = {
-          ...chatToUse,
-          messages: [...chatToUse.messages, userMessage],
-          model: submittedModel,
-        };
-
-        setCurrentChat(updatedChat);
-        setChats((prevChats) => upsertChat(prevChats, updatedChat));
-
-        if (userId) {
-          try {
-            await saveUserMessageToLocalHistory({
-              message: userMessage,
-              chatId: chatToUse.id,
-              userId,
-            });
-          } catch (dbError) {
-            logger.error(
-              '[handleSubmit] Error al guardar mensaje del usuario (continuando):',
-              dbError
-            );
-          }
-        }
-
-        if (updatedChat.messages.length === 1) {
-          void generateChatTitleForChat(updatedChat, userMessage.content);
-        }
-
-        if (!options?.contentOverride) {
-          setInputValue('');
-          setUploadedImages([]);
-        }
-
-        const webSearch = await resolveWebSearchForMessage(userMessage.content, useWebSearch);
-        if (webSearch.fallbackMessage) {
-          toast.error(webSearch.fallbackMessage);
-        }
-
-        const baseMessages = buildBaseMessages({
-          chat: updatedChat,
+      const streamConfig = getStreamRequestConfig({
+        modelId: model,
+        useWebSearchTool: webSearch.shouldUseWebSearchTool,
+        reasoningLevel,
+      });
+      const streamRequest = buildStreamRequest({
+        baseMessages: buildBaseMessages({
+          chat,
           preferences,
           webSearchContext: webSearch.webSearchContext,
-        });
+          promptTokenBudget: streamConfig.promptTokenBudget,
+        }),
+        config: streamConfig,
+        sessionId: chatId,
+      });
 
-        const assistantDraft = createAssistantDraft({
-          model: submittedModel,
-          useWebSearch,
-        });
-        const assistantMessageId = assistantDraft.id;
-        const chatWithDraft = {
-          ...updatedChat,
-          messages: [...updatedChat.messages, assistantDraft],
-        };
-        setCurrentChat(chatWithDraft);
-        setChats((prevChats) =>
-          prevChats.map((chat) =>
-            chat.id === chatWithDraft.id ? { ...chatWithDraft, title: chat.title } : chat
-          )
-        );
+      logger.info('[Generation] Stream request', {
+        selectedModel: model,
+        apiModelId: streamConfig.apiModelId,
+        usesWebSearchTool: webSearch.shouldUseWebSearchTool,
+        directWebSearchProvider: webSearch.directWebSearch?.provider,
+        reasoning: streamConfig.reasoning,
+        maxTokens: streamConfig.maxTokens,
+        promptCaching: Boolean(streamRequest.cache_control),
+      });
 
-        const updateAssistantDraft = (updates: Parameters<typeof applyAssistantDraftUpdate>[1]) => {
-          const updateDraft = (message: Message): Message =>
-            applyAssistantDraftUpdate(message, updates);
+      const draft = createAssistantDraft({ model, useWebSearch });
+      generation.draftMessageId = draft.id;
+      store.updateChat(chatId, (current) => ({
+        ...current,
+        messages: [...current.messages, draft],
+      }));
 
-          setCurrentChat((prev) =>
-            prev && prev.id === chatId
-              ? updateMessageInChat(prev, assistantMessageId, updateDraft)
-              : prev
-          );
-          setChats((prevChats) =>
-            prevChats.map((chat) =>
-              chat.id === chatId ? updateMessageInChat(chat, assistantMessageId, updateDraft) : chat
-            )
-          );
-        };
+      const updateDraft = (update: (message: Message) => Message) =>
+        store.updateChat(chatId, (current) => updateMessageInChat(current, draft.id, update));
 
-        const streamConfig = getStreamRequestConfig({
-          modelId: submittedModel,
-          useWebSearchTool: webSearch.shouldUseWebSearchTool,
-          reasoningLevel: options?.reasoningLevel,
-        });
-        const streamRequest = buildStreamRequest({
-          baseMessages,
-          config: streamConfig,
-        });
-
-        logger.info('[App] Stream request', {
-          selectedModel: submittedModel,
-          apiModelId: streamConfig.apiModelId,
-          usesWebSearchTool: webSearch.shouldUseWebSearchTool,
-          directWebSearchProvider: webSearch.directWebSearch?.provider,
-          supportsReasoning: streamConfig.supportsReasoning,
-          reasoningKeys: streamConfig.reasoning ? Object.keys(streamConfig.reasoning) : [],
-        });
-
-        const finalAssistantMessage = await runAssistantStream({
-          chatId,
-          assistantMessageId,
-          submittedModel,
+      let result: Awaited<ReturnType<typeof runAssistantStream>>;
+      try {
+        result = await runAssistantStream({
+          assistantMessageId: draft.id,
+          submittedModel: model,
           useWebSearch,
           directWebSearch: webSearch.directWebSearch,
           streamRequest,
-          controller,
-          activeFlushTimersRef,
-          activeStreamRunIdsRef,
-          onDraftUpdate: (updates) => {
-            updateChatGenerationState(chatId, updates);
-            updateAssistantDraft(updates);
-          },
+          signal,
+          onDraftUpdate: (updates) =>
+            updateDraft((message) => applyAssistantDraftUpdate(message, updates)),
         });
-        recordModelUsage(submittedModel);
-
-        const replaceAssistantDraft = (message: Message): Message =>
-          applyFinalAssistantMessage(message, finalAssistantMessage);
-
-        setCurrentChat((prev) =>
-          prev && prev.id === chatId
-            ? updateMessageInChat(prev, assistantMessageId, replaceAssistantDraft)
-            : prev
-        );
-        setChats((prevChats) =>
-          prevChats.map((chat) =>
-            chat.id === chatId
-              ? updateMessageInChat(chat, assistantMessageId, replaceAssistantDraft)
-              : chat
-          )
-        );
-
-        updateChatGenerationState(chatId, {
-          streamingComplete: true,
-        });
-
-        if (userId) {
-          try {
-            const saveResult = await saveAssistantMessageToLocalHistory({
-              message: finalAssistantMessage,
-              chatId: chatToUse.id,
-              userId,
-            });
-            if (saveResult === 'empty') {
-              logger.warn('Mensaje del asistente vacío, no se guardará en el historial local');
-            }
-          } catch (error) {
-            logger.error('Error al guardar respuesta AI:', error);
-            toast.error(t('assistantSaveError'));
-          }
+      } catch (error) {
+        // Si falló antes del primer token, no dejar una burbuja vacía.
+        const failedDraft = store
+          .getChat(chatId)
+          ?.messages.find((message) => message.id === draft.id);
+        if (!isAbortError(error) && failedDraft && !failedDraft.content.trim()) {
+          store.updateChat(chatId, (current) => ({
+            ...current,
+            messages: current.messages.filter((message) => message.id !== draft.id),
+          }));
         }
+        throw error;
+      }
 
-        await incrementUsage(getModelTier(submittedModel), userId);
-        removeAbortControllerForChat(chatToUse.id);
-      } catch (error: unknown) {
+      throwIfAborted(signal);
+      const finalMessage = result.message;
+      recordModelUsage(model);
+      updateDraft((message) => applyFinalAssistantMessage(message, finalMessage));
+
+      if (result.finishReason === 'length') {
+        toast.error(
+          finalMessage.content.trim() ? t('responseTruncated') : t('responseTruncatedEmpty'),
+          { id: `truncated-${chatId}` }
+        );
+      }
+
+      try {
+        if ((await saveMessageToLocalHistory(finalMessage, chatId)) === 'empty') {
+          logger.warn('Mensaje del asistente vacío, no se guardará en el historial local');
+        }
+      } catch (error) {
+        logger.error('Error al guardar respuesta AI:', error);
+        toast.error(t('assistantSaveError'));
+      }
+    },
+    [preferences, store]
+  );
+
+  const runGeneration = useCallback(
+    async (chatId: string, generation: ActiveGeneration, run: () => Promise<void>) => {
+      try {
+        await run();
+      } catch (error) {
         if (isAbortError(error)) {
           logger.info('Solicitud cancelada por el usuario');
         } else {
           logger.error('Error al enviar mensaje:', error);
-          // Mostrar la causa específica (clave inválida, rate-limit, red…)
-          // en lugar del genérico: los errores OpenRouter ya vienen traducidos.
+          // Los errores de OpenRouter ya vienen traducidos (clave inválida, rate-limit…).
           const cause = normalizeOpenRouterError(error);
           toast.error(cause.message || t('sendMessageError'), { id: `send-error-${chatId}` });
-          clearChatGenerationState(chatId);
         }
       } finally {
-        submittingChatIds.delete(chatId);
-        const activeFlushTimer = activeFlushTimersRef.current[chatId];
-        if (activeFlushTimer !== undefined) {
-          window.cancelAnimationFrame(activeFlushTimer);
-          delete activeFlushTimersRef.current[chatId];
-        }
-        delete activeStreamRunIdsRef.current[chatId];
-        removeAbortControllerForChat(chatId);
-        clearChatGenerationState(chatId);
+        finishGeneration(chatId, generation);
       }
     },
+    [finishGeneration]
+  );
+
+  const submitMessage = useCallback(
+    async (options?: SubmitChatOptions) => {
+      const content = composer.inputValue;
+      const images = [...composer.uploadedImages];
+      const model = selectedModel;
+
+      if (!content.trim() && images.length === 0) {
+        return;
+      }
+      if (!ensureOpenRouterKey()) {
+        return;
+      }
+
+      let chat = store.getCurrentChat() ?? createLocalChat(model);
+      const chatId = chat.id;
+      const isNewChat = !store.getChat(chatId);
+
+      // Enviar mientras se genera actúa como "detener".
+      if (generationsRef.current.has(chatId)) {
+        cancelGeneration(chatId);
+        return;
+      }
+      const generation = startGeneration(chatId);
+
+      await runGeneration(chatId, generation, async () => {
+        if (!chat.isPersisted) {
+          try {
+            chat = await persistChatIfNeeded(chat);
+          } catch (error) {
+            logger.error('[Generation] Error al crear nuevo chat local:', error);
+            toast.error(t('newChatError'));
+            return;
+          }
+          throwIfAborted(generation.controller.signal);
+        }
+
+        const userMessage = createUserMessage({
+          content,
+          images,
+          model,
+          useWebSearch: Boolean(options?.useWebSearch),
+        });
+        const chatWithMessage: Chat = {
+          ...chat,
+          messages: [...chat.messages, userMessage],
+          model,
+        };
+        if (isNewChat) {
+          store.upsertChat(chatWithMessage);
+          if (store.getState().currentChatId === null) {
+            store.selectChat(chatId);
+          }
+        } else {
+          store.updateChat(chatId, (current) => ({
+            ...current,
+            isPersisted: true,
+            model,
+            messages: [...current.messages, userMessage],
+          }));
+        }
+
+        composer.setInputValue('');
+        composer.setUploadedImages([]);
+
+        try {
+          await saveMessageToLocalHistory(userMessage, chatId);
+        } catch (error) {
+          logger.error('[Generation] Error al guardar mensaje del usuario (continuando):', error);
+        }
+        throwIfAborted(generation.controller.signal);
+
+        if (chatWithMessage.messages.length === 1) {
+          void generateTitle(chatId, userMessage.content);
+        }
+
+        await generateResponse({
+          chat: store.getChat(chatId) ?? chatWithMessage,
+          userMessage,
+          model,
+          reasoningLevel: options?.reasoningLevel,
+          generation,
+        });
+      });
+    },
     [
-      activeFlushTimersRef,
-      activeStreamRunIdsRef,
-      abortControllersRef,
       cancelGeneration,
-      clearChatGenerationState,
-      createNewChat,
-      currentChatRef,
-      generateChatTitleForChat,
-      incrementUsage,
-      inputValue,
-      ensureOpenRouterKey,
-      preferences,
-      removeAbortControllerForChat,
+      composer,
+      generateResponse,
+      generateTitle,
+      runGeneration,
       selectedModel,
-      setAbortControllerForChat,
-      setChats,
-      setCurrentChat,
-      setInputValue,
-      setUploadedImages,
-      submittingChatIds,
-      updateChatGenerationState,
-      uploadedImages,
-      userId,
+      startGeneration,
+      store,
     ]
   );
 
   const handleSubmit = useCallback(
     async (event: FormEvent, options?: SubmitChatOptions) => {
       event.preventDefault();
-      await submitChatMessage(options);
+      await submitMessage(options);
     },
-    [submitChatMessage]
+    [submitMessage]
   );
 
+  /**
+   * Regenera la respuesta a partir del mensaje de usuario anterior a
+   * `messageId` (o del último). Reutiliza ese mensaje: solo se descartan las
+   * respuestas posteriores.
+   */
   const regenerateResponse = useCallback(
     async (messageId?: string) => {
-      const chat = currentChatRef.current;
-      if (!chat) {
+      const chat = store.getCurrentChat();
+      if (!chat || !ensureOpenRouterKey()) {
         return;
       }
-      if (!ensureOpenRouterKey()) {
-        return;
-      }
-      if (submittingChatIds.has(chat.id) || abortControllersRef.current[chat.id]) {
+      if (generationsRef.current.has(chat.id)) {
         toast.error(t('generationInProgress'));
         return;
       }
 
-      const regenerationPlan = buildRegenerationPlan(chat, messageId);
-      if (!regenerationPlan) {
+      const plan = buildRegenerationPlan(chat, messageId);
+      if (!plan) {
         toast.error(t('cannotRegenerate'));
         return;
       }
-      const { userMessage, updatedChat, removedMessageIds, attachmentsOverride } = regenerationPlan;
 
-      setCurrentChat(updatedChat);
-      setChats((prev) =>
-        prev.map((candidate) => (candidate.id === chat.id ? updatedChat : candidate))
-      );
-      if (removedMessageIds.length > 0 && chat.isPersisted) {
-        deleteMessagesByIds(chat.id, removedMessageIds).catch((error) => {
+      const generation = startGeneration(chat.id);
+      store.updateChat(chat.id, () => plan.updatedChat);
+      if (plan.removedMessageIds.length > 0 && chat.isPersisted) {
+        deleteMessagesByIds(chat.id, plan.removedMessageIds).catch((error: unknown) => {
           logger.error('Error al limpiar mensajes regenerados en historial local:', error);
           toast.error(t('persistHistoryError'));
         });
       }
+      highlightMessage(plan.userMessage.id);
 
-      setTimeout(() => {
-        const element = document.getElementById(`message-${userMessage.id}`);
-        if (element) {
-          element.classList.add('regenerating-pulse');
-          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          setTimeout(() => element.classList.remove('regenerating-pulse'), 2000);
-        }
-      }, 100);
-
-      await submitChatMessage({
-        contentOverride: userMessage.content,
-        attachmentsOverride,
-        chatSnapshot: updatedChat,
-      });
+      await runGeneration(chat.id, generation, () =>
+        generateResponse({
+          chat: plan.updatedChat,
+          userMessage: plan.userMessage,
+          model: selectedModel,
+          generation,
+        })
+      );
     },
-    [
-      abortControllersRef,
-      currentChatRef,
-      ensureOpenRouterKey,
-      setChats,
-      setCurrentChat,
-      submitChatMessage,
-      submittingChatIds,
-    ]
+    [generateResponse, runGeneration, selectedModel, startGeneration, store]
   );
 
   return {
-    chatGenerationStates,
-    abortControllers,
     generatingChatIds,
-    partialResponse,
-    streamingComplete,
-    isLoading,
     handleSubmit,
     cancelGeneration,
     regenerateResponse,
-  };
+  } as const;
 }

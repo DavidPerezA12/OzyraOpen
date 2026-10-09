@@ -8,8 +8,9 @@ import {
   getOpenRouterConfig,
   readOpenRouterError,
 } from './client';
-import type { ChatCompletionRequest, StreamCallbacks } from './types';
+import type { ChatCompletionRequest, CompletionUsage, StreamCallbacks } from './types';
 import type { MessageAnnotation } from '../../types';
+import { isRecord } from '../../utils/typeGuards';
 import { logger } from '../../utils/logger';
 
 type StreamDelta = {
@@ -90,17 +91,60 @@ function readAnnotations(value: unknown): MessageAnnotation[] {
   return value.filter(isUrlCitationAnnotation);
 }
 
+const readTokenCount = (source: Record<string, unknown> | null, key: string): number => {
+  const value = source?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+};
+
+/** Normaliza el objeto `usage` que OpenRouter envía en el último chunk del stream. */
+function readCompletionUsage(value: unknown): CompletionUsage | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const promptDetails = isRecord(value.prompt_tokens_details) ? value.prompt_tokens_details : null;
+  const completionDetails = isRecord(value.completion_tokens_details)
+    ? value.completion_tokens_details
+    : null;
+
+  return {
+    promptTokens: readTokenCount(value, 'prompt_tokens'),
+    completionTokens: readTokenCount(value, 'completion_tokens'),
+    cachedTokens: readTokenCount(promptDetails, 'cached_tokens'),
+    cacheWriteTokens: readTokenCount(promptDetails, 'cache_write_tokens'),
+    reasoningTokens: readTokenCount(completionDetails, 'reasoning_tokens'),
+    ...(typeof value.cost === 'number' ? { cost: value.cost } : {}),
+  };
+}
+
+/** Error enviado por OpenRouter dentro del stream (p. ej. el proveedor falla a mitad). */
+function readStreamError(value: unknown): Error | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const message = typeof value.message === 'string' && value.message ? value.message : null;
+  return new Error(message ?? t('unknownError'));
+}
+
+type StreamChunk = {
+  choices?: Array<{ delta?: unknown; finish_reason?: unknown }>;
+  usage?: unknown;
+  error?: unknown;
+};
+
 export async function createOpenRouterStream(
   request: ChatCompletionRequest,
   callbacks: StreamCallbacks,
   signal?: AbortSignal
 ): Promise<void> {
-  const { onChunk, onComplete, onError, onAnnotations } = callbacks;
+  const { onChunk, onComplete, onError, onAnnotations, onMetadata } = callbacks;
 
   try {
     const streamRequest = { ...request, stream: true };
     const config = getOpenRouterConfig();
-    const allowReasoning = Boolean(streamRequest?.reasoning?.enabled);
+    // Cualquier configuración de razonamiento (enabled, effort o max_tokens)
+    // lo activa, salvo que se pida explícitamente excluirlo de la respuesta.
+    const allowReasoning = Boolean(streamRequest.reasoning) && !streamRequest.reasoning?.exclude;
 
     logger.info('[ChatService] createChatCompletionStream start', {
       model: streamRequest.model,
@@ -135,7 +179,18 @@ export async function createOpenRouterStream(
     let buffer = '';
     let fullText = '';
     let inReasoning = false;
+    let finishReason: string | undefined;
+    let usage: CompletionUsage | undefined;
     const MAX_STREAM_BUFFER = 1_000_000;
+
+    const finish = () => {
+      if (inReasoning) {
+        onChunk('</thinking>');
+        inReasoning = false;
+      }
+      onMetadata?.({ finishReason, usage });
+      onComplete(fullText);
+    };
 
     try {
       while (true) {
@@ -151,12 +206,7 @@ export async function createOpenRouterStream(
         }
 
         if (done) {
-          if (inReasoning) {
-            onChunk('</thinking>');
-            inReasoning = false;
-          }
-
-          onComplete(fullText);
+          finish();
           break;
         }
 
@@ -176,49 +226,58 @@ export async function createOpenRouterStream(
           const data = line.slice(6);
 
           if (data === '[DONE]') {
-            if (inReasoning) {
-              onChunk('</thinking>');
-              inReasoning = false;
-            }
-
-            onComplete(fullText);
+            finish();
             return;
           }
 
+          let parsed: StreamChunk;
           try {
-            const parsed = JSON.parse(data) as { choices?: Array<{ delta?: unknown }> };
-            const delta = asStreamDelta(parsed.choices?.[0]?.delta);
-            const reasoningDelta = readReasoningDelta(delta);
-
-            if (reasoningDelta && allowReasoning) {
-              if (!inReasoning) {
-                onChunk('<thinking>');
-                inReasoning = true;
-                logger.info('[ChatService] Reasoning block started');
-              }
-              onChunk(reasoningDelta);
-            }
-
-            const content = typeof delta.content === 'string' ? delta.content : '';
-            if (content) {
-              if (inReasoning) {
-                onChunk('</thinking>');
-                inReasoning = false;
-                logger.info('[ChatService] Reasoning block closed');
-              }
-              // Neutralizar marcadores inyectados por el modelo: solo la app
-              // puede abrir/cerrar bloques de razonamiento en esta banda.
-              const safeContent = escapeThinkingMarkers(content);
-              fullText += safeContent;
-              onChunk(safeContent);
-            }
-
-            const annotations = readAnnotations(delta.annotations);
-            if (annotations.length > 0) {
-              onAnnotations?.(annotations);
-            }
+            parsed = JSON.parse(data) as StreamChunk;
           } catch (parseError) {
             logger.warn('Error parsing stream chunk:', { detail: parseError });
+            continue;
+          }
+
+          const streamError = readStreamError(parsed.error);
+          if (streamError) {
+            throw streamError;
+          }
+
+          const choice = parsed.choices?.[0];
+          if (typeof choice?.finish_reason === 'string') {
+            finishReason = choice.finish_reason;
+          }
+          usage = readCompletionUsage(parsed.usage) ?? usage;
+
+          const delta = asStreamDelta(choice?.delta);
+          const reasoningDelta = readReasoningDelta(delta);
+
+          if (reasoningDelta && allowReasoning) {
+            if (!inReasoning) {
+              onChunk('<thinking>');
+              inReasoning = true;
+              logger.info('[ChatService] Reasoning block started');
+            }
+            onChunk(reasoningDelta);
+          }
+
+          const content = typeof delta.content === 'string' ? delta.content : '';
+          if (content) {
+            if (inReasoning) {
+              onChunk('</thinking>');
+              inReasoning = false;
+              logger.info('[ChatService] Reasoning block closed');
+            }
+            // Neutralizar marcadores inyectados por el modelo: solo la app
+            // puede abrir/cerrar bloques de razonamiento en esta banda.
+            const safeContent = escapeThinkingMarkers(content);
+            fullText += safeContent;
+            onChunk(safeContent);
+          }
+
+          const annotations = readAnnotations(delta.annotations);
+          if (annotations.length > 0) {
+            onAnnotations?.(annotations);
           }
         }
       }

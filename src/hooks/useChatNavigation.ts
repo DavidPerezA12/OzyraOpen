@@ -1,88 +1,87 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  type Dispatch,
-  type RefObject,
-  type SetStateAction,
-} from 'react';
-import type { Chat, UploadedImage } from '../types';
+import { useCallback, useEffect, useRef, type RefObject } from 'react';
+import type { ChatStore } from '../state/chatStore';
+
+const replaceUrlParams = (update: (params: URLSearchParams) => void): void => {
+  try {
+    const url = new URL(window.location.href);
+    update(url.searchParams);
+    window.history.replaceState({}, '', url.toString());
+  } catch {
+    // La navegación no debe depender de que la URL se pueda reescribir.
+  }
+};
 
 interface UseChatNavigationParams {
-  readonly chats: Chat[];
-  readonly currentChat: Chat | null;
-  readonly setCurrentChat: Dispatch<SetStateAction<Chat | null>>;
-  readonly setInputValue: Dispatch<SetStateAction<string>>;
-  readonly setUploadedImages: Dispatch<SetStateAction<UploadedImage[]>>;
-  readonly setIsModelDropdownOpen: Dispatch<SetStateAction<boolean>>;
+  readonly store: ChatStore;
+  /** Se invoca al empezar un chat nuevo (limpiar composer, cerrar menús…) */
+  readonly onNewChat: () => void;
   readonly textareaRef: RefObject<HTMLTextAreaElement>;
+  /** Hay chats cargados: permite resolver `?chat=<id>` cuando llega el historial */
+  readonly chatCount: number;
 }
 
+/**
+ * Selección de chats sincronizada con la URL (`?chat=<id>` para enlazar un
+ * chat, `?newChat=1` para abrir la app en un chat nuevo).
+ */
 export function useChatNavigation({
-  chats,
-  currentChat,
-  setCurrentChat,
-  setInputValue,
-  setUploadedImages,
-  setIsModelDropdownOpen,
+  store,
+  onNewChat,
   textareaRef,
+  chatCount,
 }: UseChatNavigationParams) {
-  const suppressAutoSelectRef = useRef(false);
+  const suppressUrlSelectionRef = useRef(false);
+
+  const selectChat = useCallback(
+    (chatId: string) => {
+      suppressUrlSelectionRef.current = true;
+      store.selectChat(chatId);
+      replaceUrlParams((params) => {
+        params.set('chat', chatId);
+        params.delete('newChat');
+      });
+    },
+    [store]
+  );
 
   const startNewChat = useCallback(() => {
-    suppressAutoSelectRef.current = true;
-    setCurrentChat(null);
-    setInputValue('');
-    setUploadedImages([]);
-    setIsModelDropdownOpen(false);
+    suppressUrlSelectionRef.current = true;
+    store.selectChat(null);
+    onNewChat();
+    replaceUrlParams((params) => {
+      params.delete('chat');
+      params.delete('newChat');
+    });
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [onNewChat, store, textareaRef]);
 
-    try {
-      const url = new URL(window.location.href);
-      url.searchParams.delete('chat');
-      url.searchParams.delete('newChat');
-      window.history.replaceState({}, '', url.toString());
-    } catch {
-      // Starting a new chat should not depend on URL cleanup succeeding.
-    }
-
-    setTimeout(() => {
-      textareaRef.current?.focus();
-    }, 0);
-  }, [setCurrentChat, setInputValue, setIsModelDropdownOpen, setUploadedImages, textareaRef]);
-
+  // `?newChat=1` es una instrucción de arranque: `startNewChat` borra el
+  // parámetro, así que solo surte efecto una vez.
   useEffect(() => {
     try {
-      const url = new URL(window.location.href);
-      if (url.searchParams.get('newChat') === '1') {
-        suppressAutoSelectRef.current = true;
+      if (new URL(window.location.href).searchParams.get('newChat') === '1') {
         startNewChat();
-        url.searchParams.delete('newChat');
-        window.history.replaceState({}, '', url.toString());
       }
     } catch {
-      // Ignore malformed URLs and keep the default startup flow.
+      // URL malformada: se sigue con el arranque normal.
     }
   }, [startNewChat]);
 
+  // `?chat=<id>` se resuelve en cuanto ese chat existe (el historial carga async).
   useEffect(() => {
-    if (suppressAutoSelectRef.current || currentChat) {
+    if (suppressUrlSelectionRef.current || store.getState().currentChatId) {
       return;
     }
-
     try {
-      const url = new URL(window.location.href);
-      const chatIdParam = url.searchParams.get('chat');
-      if (!chatIdParam) {
-        return;
-      }
-      const chat = chats.find((candidate) => candidate.id === chatIdParam);
-      if (chat) {
-        setCurrentChat(chat);
+      const chatId = new URL(window.location.href).searchParams.get('chat');
+      if (chatId && store.getChat(chatId)) {
+        suppressUrlSelectionRef.current = true;
+        store.selectChat(chatId);
       }
     } catch {
-      // Ignore malformed URLs; chat selection can continue from in-memory state.
+      // URL malformada: la selección continúa desde el estado en memoria.
     }
-  }, [chats, currentChat, setCurrentChat]);
+  }, [chatCount, store]);
 
-  return { startNewChat } as const;
+  return { selectChat, startNewChat } as const;
 }

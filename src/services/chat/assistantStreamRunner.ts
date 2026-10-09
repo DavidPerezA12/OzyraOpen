@@ -1,5 +1,9 @@
-import { chatService, type ChatCompletionRequest } from '../chatService';
-import { generateId } from '../../utils/id';
+import {
+  chatService,
+  type ChatCompletionRequest,
+  type CompletionUsage,
+  type StreamMetadata,
+} from '../chatService';
 import type { WebSearchResponse } from '../search/types';
 import type { Message, MessageAnnotation } from '../../types';
 import { splitReasoningChunk, stripReasoningMarkers } from '../../utils/reasoningStream';
@@ -11,20 +15,44 @@ export type AssistantDraftUpdate = Partial<{
   thinkingProcessContent: string | null;
 }>;
 
-type MutableStore<T> = {
-  current: T;
+export interface AssistantStreamResult {
+  readonly message: Message;
+  /** `length` indica que la respuesta se cortó por `max_tokens` */
+  readonly finishReason?: string;
+  readonly usage?: CompletionUsage;
+}
+
+/**
+ * Registra el uso de tokens de la petición, incluido el aprovechamiento del
+ * prompt cache, para poder verificarlo desde la consola en desarrollo.
+ */
+const logCompletionUsage = (model: string, metadata: StreamMetadata): void => {
+  const usage = metadata.usage;
+  if (!usage) {
+    return;
+  }
+  logger.info('[PromptCache] Uso de tokens', {
+    model,
+    finishReason: metadata.finishReason,
+    promptTokens: usage.promptTokens,
+    cachedTokens: usage.cachedTokens,
+    cacheWriteTokens: usage.cacheWriteTokens,
+    cacheHitRatio:
+      usage.promptTokens > 0 ? Number((usage.cachedTokens / usage.promptTokens).toFixed(3)) : 0,
+    completionTokens: usage.completionTokens,
+    reasoningTokens: usage.reasoningTokens,
+    cost: usage.cost,
+  });
 };
 
 export interface RunAssistantStreamParams {
-  readonly chatId: string;
   readonly assistantMessageId: string;
   readonly submittedModel: string;
   readonly useWebSearch: boolean;
   readonly directWebSearch: WebSearchResponse | null;
   readonly streamRequest: ChatCompletionRequest;
-  readonly controller: AbortController;
-  readonly activeFlushTimersRef: MutableStore<Record<string, number>>;
-  readonly activeStreamRunIdsRef: MutableStore<Record<string, string>>;
+  /** Al abortarse, el stream se corta y no se emiten más actualizaciones del borrador */
+  readonly signal: AbortSignal;
   readonly onDraftUpdate: (updates: AssistantDraftUpdate) => void;
 }
 
@@ -39,28 +67,20 @@ const buildAnnotationMap = (
 };
 
 export async function runAssistantStream({
-  chatId,
   assistantMessageId,
   submittedModel,
   useWebSearch,
   directWebSearch,
   streamRequest,
-  controller,
-  activeFlushTimersRef,
-  activeStreamRunIdsRef,
+  signal,
   onDraftUpdate,
-}: RunAssistantStreamParams): Promise<Message> {
-  const streamRunId = generateId();
-  activeStreamRunIdsRef.current[chatId] = streamRunId;
-
+}: RunAssistantStreamParams): Promise<AssistantStreamResult> {
   let accumulatedResponse = '';
   let accumulatedThinking = '';
   let inReasoning = false;
   let dirtyResponse = false;
   let dirtyThinking = false;
-
-  const isActiveStreamRun = () =>
-    activeStreamRunIdsRef.current[chatId] === streamRunId && !controller.signal.aborted;
+  let scheduledFlush: (() => void) | null = null;
 
   const webAnnotationsByUrl = buildAnnotationMap(directWebSearch);
   const collectWebAnnotations = (annotations: MessageAnnotation[]) => {
@@ -70,8 +90,10 @@ export async function runAssistantStream({
   };
 
   const flushNow = () => {
-    delete activeFlushTimersRef.current[chatId];
-    if (!isActiveStreamRun()) {
+    const cancelScheduledFlush = scheduledFlush;
+    scheduledFlush = null;
+    cancelScheduledFlush?.();
+    if (signal.aborted) {
       dirtyResponse = false;
       dirtyThinking = false;
       return;
@@ -93,15 +115,27 @@ export async function runAssistantStream({
     }
   };
 
+  // Agrupa los chunks en una actualización por frame para no re-renderizar
+  // el chat completo con cada token.
   const scheduleFlush = () => {
-    if (activeFlushTimersRef.current[chatId] !== undefined) {
+    if (scheduledFlush) {
       return;
     }
-    const schedule =
-      typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function'
-        ? window.requestAnimationFrame.bind(window)
-        : (callback: () => void) => window.setTimeout(callback, 16);
-    activeFlushTimersRef.current[chatId] = schedule(flushNow);
+    let fired = false;
+    const run = () => {
+      fired = true;
+      flushNow();
+    };
+    if (typeof window.requestAnimationFrame === 'function') {
+      const frame = window.requestAnimationFrame(run);
+      // Si el callback ya se ejecutó de forma síncrona no queda nada pendiente.
+      if (!fired) {
+        scheduledFlush = () => window.cancelAnimationFrame(frame);
+      }
+    } else {
+      const timeout = window.setTimeout(run, 16);
+      scheduledFlush = () => window.clearTimeout(timeout);
+    }
   };
 
   const appendStreamChunk = (chunk: string) => {
@@ -130,22 +164,30 @@ export async function runAssistantStream({
     rejectFinalText = reject;
   });
 
+  let metadata: StreamMetadata = {};
+
   await chatService.createChatCompletionStream(
     streamRequest,
-    appendStreamChunk,
-    () => {
-      flushNow();
-      // Resolver siempre: si el run quedó obsoleto (nuevo stream o cancel),
-      // el llamador decide qué hacer con el texto parcial en lugar de colgarse.
-      resolveFinalText(stripReasoningMarkers(accumulatedResponse));
+    {
+      onChunk: appendStreamChunk,
+      onComplete: () => {
+        flushNow();
+        // Resolver siempre: si el run quedó obsoleto (nuevo stream o cancel),
+        // el llamador decide qué hacer con el texto parcial en lugar de colgarse.
+        resolveFinalText(stripReasoningMarkers(accumulatedResponse));
+      },
+      onError: (error: Error) => {
+        logger.error('Error en stream:', error);
+        flushNow();
+        rejectFinalText(error);
+      },
+      onAnnotations: collectWebAnnotations,
+      onMetadata: (streamMetadata) => {
+        metadata = streamMetadata;
+        logCompletionUsage(streamRequest.model, streamMetadata);
+      },
     },
-    (error: Error) => {
-      logger.error('Error en stream:', error);
-      flushNow();
-      rejectFinalText(error);
-    },
-    collectWebAnnotations,
-    controller.signal
+    signal
   );
 
   const finalAssistantText = await finalTextPromise;
@@ -153,13 +195,17 @@ export async function runAssistantStream({
   const webAnnotations = Array.from(webAnnotationsByUrl.values());
   const webSearchQueries = directWebSearch ? [directWebSearch.query] : undefined;
 
-  return buildAssistantMessage({
-    id: assistantMessageId,
-    content: finalVisibleText,
-    model: submittedModel,
-    thinkingContent: accumulatedThinking || undefined,
-    useWebSearch: useWebSearch || undefined,
-    searchQueries: webSearchQueries,
-    annotations: webAnnotations.length > 0 ? webAnnotations : undefined,
-  });
+  return {
+    message: buildAssistantMessage({
+      id: assistantMessageId,
+      content: finalVisibleText,
+      model: submittedModel,
+      thinkingContent: accumulatedThinking || undefined,
+      useWebSearch: useWebSearch || undefined,
+      searchQueries: webSearchQueries,
+      annotations: webAnnotations.length > 0 ? webAnnotations : undefined,
+    }),
+    finishReason: metadata.finishReason,
+    usage: metadata.usage,
+  };
 }

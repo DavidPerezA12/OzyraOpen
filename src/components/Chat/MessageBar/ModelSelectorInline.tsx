@@ -1,92 +1,55 @@
-import { Bot, Check, ChevronDown, Search, Settings, X, Zap } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import {
-  availableModels,
-  getModelInfo,
-  getModelUsageScores,
-  MODEL_CATALOG_UPDATED_EVENT,
-} from '../../../config/models';
+import { Bot, Check, ChevronDown, Search, Settings, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { getModelInfo, useModelCatalog } from '../../../models/catalog';
+import { useModelUsageScores } from '../../../models/usage';
+import type { ModelInfo } from '../../../types';
 import { t } from '../../../i18n';
 
-interface ModelSelectorInlineProps {
-  readonly selectedModel: string;
-  readonly isModelDropdownOpen: boolean;
-  readonly setIsModelDropdownOpen: (isOpen: boolean) => void;
-  readonly modelDropdownRef: RefObject<HTMLDivElement>;
-  readonly modelSearchQuery: string;
-  readonly setModelSearchQuery: (query: string) => void;
-  readonly enabledModelIds: readonly string[];
-  readonly handleModelSelect: (modelId: string) => void;
-  readonly setShowSettings: (show: boolean) => void;
-}
+import type { ModelPickerProps } from './types';
 
-const modelMatchesQuery = (
-  model: (typeof availableModels)[number],
-  enabledModelIds: readonly string[],
-  modelSearchQuery: string
-) =>
-  enabledModelIds.includes(model.id) &&
-  (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
-    model.displayProviderName.toLowerCase().includes(modelSearchQuery.toLowerCase()));
+const modelMatchesQuery = (model: ModelInfo, query: string) =>
+  model.name.toLowerCase().includes(query) ||
+  model.displayProviderName.toLowerCase().includes(query);
 
 export const ModelSelectorInline = ({
   selectedModel,
-  isModelDropdownOpen,
-  setIsModelDropdownOpen,
-  modelDropdownRef,
-  modelSearchQuery,
-  setModelSearchQuery,
   enabledModelIds,
-  handleModelSelect,
-  setShowSettings,
-}: ModelSelectorInlineProps) => {
+  onSelectModel,
+  onOpenSettings,
+}: ModelPickerProps) => {
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+  const [modelSearchQuery, setModelSearchQuery] = useState('');
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
+  const { models } = useModelCatalog();
   const selectedModelInfo = getModelInfo(selectedModel);
   const modelSearchInputRef = useRef<HTMLInputElement>(null);
-  // Leer usage scores solo al abrir el dropdown o cuando cambia el catálogo:
-  // leer localStorage + crear un Map en cada render invalidaba el useMemo de
-  // abajo sobre cientos de modelos.
-  const [usageScoresVersion, setUsageScoresVersion] = useState(0);
-  useEffect(() => {
-    const handleCatalogUpdate = () => setUsageScoresVersion((version) => version + 1);
-    window.addEventListener(MODEL_CATALOG_UPDATED_EVENT, handleCatalogUpdate);
-    return () => window.removeEventListener(MODEL_CATALOG_UPDATED_EVENT, handleCatalogUpdate);
-  }, []);
-  const modelUsageScores = useMemo(
-    () => getModelUsageScores(),
-    // Intencionado: isModelDropdownOpen/usageScoresVersion son claves de
-    // invalidación de caché, no valores reactivos leídos por el cálculo.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isModelDropdownOpen, usageScoresVersion]
-  );
-  const enabledModelsCount = useMemo(
-    () => availableModels.filter((m) => enabledModelIds.includes(m.id)).length,
-    [enabledModelIds]
-  );
-  const filteredModels = useMemo(
-    () =>
-      availableModels
-        .filter((m) => modelMatchesQuery(m, enabledModelIds, modelSearchQuery))
-        .sort((a, b) => {
-          if (a.id === selectedModel) {
-            return -1;
-          }
-          if (b.id === selectedModel) {
-            return 1;
-          }
-          const usageDelta = (modelUsageScores.get(b.id) ?? 0) - (modelUsageScores.get(a.id) ?? 0);
-          if (usageDelta !== 0) {
-            return usageDelta;
-          }
-          if ((a.isRecommended ?? false) && !(b.isRecommended ?? false)) {
-            return -1;
-          }
-          if (!(a.isRecommended ?? false) && (b.isRecommended ?? false)) {
-            return 1;
-          }
-          return a.name.localeCompare(b.name);
-        }),
-    [enabledModelIds, modelSearchQuery, modelUsageScores, selectedModel]
-  );
+  const modelUsageScores = useModelUsageScores();
+  const enabledModels = useMemo(() => {
+    const enabledIds = new Set(enabledModelIds);
+    return models.filter((model) => enabledIds.has(model.id));
+  }, [enabledModelIds, models]);
+  const enabledModelsCount = enabledModels.length;
+  const filteredModels = useMemo(() => {
+    const query = modelSearchQuery.trim().toLowerCase();
+    return enabledModels
+      .filter((model) => !query || modelMatchesQuery(model, query))
+      .sort((a, b) => {
+        if (a.id === selectedModel) {
+          return -1;
+        }
+        if (b.id === selectedModel) {
+          return 1;
+        }
+        const usageDelta = (modelUsageScores.get(b.id) ?? 0) - (modelUsageScores.get(a.id) ?? 0);
+        if (usageDelta !== 0) {
+          return usageDelta;
+        }
+        if ((a.isRecommended ?? false) !== (b.isRecommended ?? false)) {
+          return a.isRecommended ? -1 : 1;
+        }
+        return a.name.localeCompare(b.name);
+      });
+  }, [enabledModels, modelSearchQuery, modelUsageScores, selectedModel]);
 
   useEffect(() => {
     if (!isModelDropdownOpen) {
@@ -122,7 +85,7 @@ export const ModelSelectorInline = ({
   }, [isModelDropdownOpen, setIsModelDropdownOpen]);
 
   const selectModel = (modelId: string) => {
-    handleModelSelect(modelId);
+    onSelectModel(modelId);
     setIsModelDropdownOpen(false);
     setModelSearchQuery('');
   };
@@ -137,34 +100,11 @@ export const ModelSelectorInline = ({
       );
     }
 
-    if (selectedModel === 'ozyra/auto-select') {
-      return (
-        <div className="flex items-center gap-2">
-          <div className="flex-shrink-0">
-            <Zap size={14} className="opacity-80" />
-          </div>
-          <span className="font-medium">Ozyra</span>
-        </div>
-      );
-    }
-
-    const icon = selectedModelInfo.icon || Bot;
-    const IconComponent = typeof icon === 'string' ? null : icon;
-
+    const SelectedIcon = selectedModelInfo.icon;
     return (
       <div className="flex items-center gap-2">
         <div className="flex-shrink-0">
-          {typeof icon === 'string' ? (
-            <img
-              src={icon}
-              alt={`${selectedModelInfo.displayProviderName} logo`}
-              className="model-provider-logo h-3.5 w-3.5 object-contain"
-              loading="lazy"
-              decoding="async"
-            />
-          ) : IconComponent ? (
-            <IconComponent size={14} className="opacity-80" />
-          ) : null}
+          <SelectedIcon size={14} className="opacity-80" />
         </div>
         <span className="font-medium">{selectedModelInfo.name}</span>
       </div>
@@ -255,8 +195,7 @@ export const ModelSelectorInline = ({
               </div>
             ) : (
               filteredModels.map((model) => {
-                const modelIcon = model.icon || Bot;
-                const ModelIconComponent = typeof modelIcon === 'string' ? null : modelIcon;
+                const ModelIcon = model.icon;
                 const isSelected = selectedModel === model.id;
 
                 return (
@@ -279,24 +218,12 @@ export const ModelSelectorInline = ({
                           : 'bg-[var(--bg-secondary)]'
                       }`}
                     >
-                      {typeof modelIcon === 'string' ? (
-                        <img
-                          src={modelIcon}
-                          alt={`${model.displayProviderName} logo`}
-                          className="model-provider-logo h-4 w-4 object-contain transition-all duration-150"
-                          loading="lazy"
-                          decoding="async"
-                        />
-                      ) : ModelIconComponent ? (
-                        <ModelIconComponent
-                          size={16}
-                          className={
-                            isSelected
-                              ? 'text-[var(--color-primary)]'
-                              : 'text-[var(--text-primary)]'
-                          }
-                        />
-                      ) : null}
+                      <ModelIcon
+                        size={16}
+                        className={
+                          isSelected ? 'text-[var(--color-primary)]' : 'text-[var(--text-primary)]'
+                        }
+                      />
                     </div>
 
                     <div className="flex-1 min-w-0">
@@ -330,7 +257,7 @@ export const ModelSelectorInline = ({
             <button
               type="button"
               onClick={() => {
-                setShowSettings(true);
+                onOpenSettings();
                 setIsModelDropdownOpen(false);
               }}
               className="atelier-btn-secondary w-full justify-center text-xs"

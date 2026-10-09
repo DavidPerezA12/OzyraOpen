@@ -18,15 +18,12 @@ const baseRequest: ChatCompletionRequest = {
 const createRunnerParams = (
   overrides: Partial<RunAssistantStreamParams> = {}
 ): RunAssistantStreamParams => ({
-  chatId: 'chat-1',
   assistantMessageId: 'assistant-1',
   submittedModel: 'openai/gpt-5-chat',
   useWebSearch: false,
   directWebSearch: null,
   streamRequest: baseRequest,
-  controller: new AbortController(),
-  activeFlushTimersRef: { current: {} },
-  activeStreamRunIdsRef: { current: {} },
+  signal: new AbortController().signal,
   onDraftUpdate: vi.fn(),
   ...overrides,
 });
@@ -46,7 +43,7 @@ describe('runAssistantStream', () => {
 
   it('streams visible text, thinking content and annotations into a final assistant message', async () => {
     vi.mocked(chatService.createChatCompletionStream).mockImplementation(
-      async (_request, onChunk, onComplete, _onError, onAnnotations) => {
+      async (_request, { onChunk, onComplete, onAnnotations, onMetadata }) => {
         onChunk('Hola <thinking>plan</thinking>mundo');
         onAnnotations?.([
           {
@@ -54,12 +51,22 @@ describe('runAssistantStream', () => {
             url_citation: { url: 'https://stream.example', title: 'Stream' },
           },
         ]);
+        onMetadata?.({
+          finishReason: 'stop',
+          usage: {
+            promptTokens: 1200,
+            completionTokens: 40,
+            cachedTokens: 1024,
+            cacheWriteTokens: 0,
+            reasoningTokens: 10,
+          },
+        });
         onComplete();
       }
     );
 
     const onDraftUpdate = vi.fn();
-    const message = await runAssistantStream(
+    const { message, finishReason, usage } = await runAssistantStream(
       createRunnerParams({
         useWebSearch: true,
         directWebSearch: {
@@ -93,5 +100,18 @@ describe('runAssistantStream', () => {
       'https://direct.example',
       'https://stream.example',
     ]);
+    expect(finishReason).toBe('stop');
+    expect(usage).toMatchObject({ promptTokens: 1200, cachedTokens: 1024 });
+  });
+
+  it('rejects with the error reported by the stream', async () => {
+    vi.mocked(chatService.createChatCompletionStream).mockImplementation(
+      async (_request, { onChunk, onError }) => {
+        onChunk('parcial');
+        onError(new Error('Proveedor caído'));
+      }
+    );
+
+    await expect(runAssistantStream(createRunnerParams())).rejects.toThrow('Proveedor caído');
   });
 });

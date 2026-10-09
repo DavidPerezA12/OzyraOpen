@@ -1,42 +1,34 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useState } from 'react';
 import toast from 'react-hot-toast';
 import { t } from '../i18n';
-import type { Chat, Message } from '../types';
+import type { ChatStore } from '../state/chatStore';
+import type { Message } from '../types';
 import { updateMessageContent } from '../utils/db';
 import { logger } from '../utils/logger';
 
-interface UseMessageEditingParams {
-  readonly currentChat: Chat | null;
-  readonly setChats: Dispatch<SetStateAction<Chat[]>>;
-  readonly setCurrentChat: Dispatch<SetStateAction<Chat | null>>;
-  readonly editingContent: string;
-  readonly setEditingMessageId: Dispatch<SetStateAction<string | null>>;
-  readonly setEditingContent: Dispatch<SetStateAction<string>>;
-}
+/** Edición en línea de mensajes del chat activo. */
+export function useMessageEditing(store: ChatStore) {
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState('');
 
-export function useMessageEditing({
-  currentChat,
-  setChats,
-  setCurrentChat,
-  editingContent,
-  setEditingMessageId,
-  setEditingContent,
-}: UseMessageEditingParams) {
-  const startEditingMessage = useCallback(
-    (message: Message) => {
-      setEditingMessageId(message.id);
-      setEditingContent(message.content);
-    },
-    [setEditingContent, setEditingMessageId]
-  );
+  const startEditingMessage = useCallback((message: Message) => {
+    setEditingMessageId(message.id);
+    setEditingContent(message.content);
+  }, []);
+
+  const cancelMessageEdit = useCallback(() => {
+    setEditingMessageId(null);
+    setEditingContent('');
+  }, []);
 
   const saveMessageEdit = useCallback(
     async (messageId: string) => {
-      if (!currentChat) {
+      const chat = store.getCurrentChat();
+      if (!chat) {
         return;
       }
 
-      if (currentChat.isPersisted) {
+      if (chat.isPersisted) {
         try {
           await updateMessageContent(messageId, editingContent);
         } catch (error) {
@@ -46,27 +38,21 @@ export function useMessageEditing({
         }
       }
 
-      const updatedMessages = currentChat.messages.map((message) =>
-        message.id === messageId ? { ...message, content: editingContent } : message
-      );
-      const updatedChat = { ...currentChat, messages: updatedMessages };
-
-      setCurrentChat(updatedChat);
-      setChats((currentChats) =>
-        currentChats.map((chat) => (chat.id === currentChat.id ? updatedChat : chat))
-      );
-      setEditingMessageId(null);
-      setEditingContent('');
+      store.updateChat(chat.id, (current) => ({
+        ...current,
+        messages: current.messages.map((message) =>
+          message.id === messageId ? { ...message, content: editingContent } : message
+        ),
+      }));
+      cancelMessageEdit();
     },
-    [currentChat, editingContent, setChats, setCurrentChat, setEditingContent, setEditingMessageId]
+    [cancelMessageEdit, editingContent, store]
   );
 
-  const cancelMessageEdit = useCallback(() => {
-    setEditingMessageId(null);
-    setEditingContent('');
-  }, [setEditingContent, setEditingMessageId]);
-
   return {
+    editingMessageId,
+    editingContent,
+    setEditingContent,
     startEditingMessage,
     saveMessageEdit,
     cancelMessageEdit,

@@ -3,8 +3,9 @@
  */
 
 import type { Chat as ChatType } from '../types';
-import { DEFAULT_MODEL_ID } from '../config/models';
+import { fromChatRecord, toChatRecord, toMessageRecord } from '../services/chat/chatRecords';
 import {
+  LOCAL_USER_ID,
   createChat as createChatDb,
   createMessage,
   getChats as getChatsDb,
@@ -14,24 +15,15 @@ import { readLocalStorage, removeLocalStorage, writeLocalStorage } from './brows
 import { generateId } from './id';
 import { logger } from './logger';
 
-const toCreatedAtIso = (createdAt: number | undefined): string | undefined => {
-  if (!createdAt || Number.isNaN(createdAt)) {
-    return undefined;
-  }
-
-  return new Date(createdAt).toISOString();
-};
-
 /**
  * Migra/reconcilia chats guardados en localStorage a la base local actual.
  */
 export async function migrateLocalChatsToDatabase(
-  userId: string,
-  localChats: ChatType[]
+  localChats: readonly ChatType[]
 ): Promise<{ success: boolean; migratedCount: number }> {
-  const migrationKey = `migrated_chats_${userId}`;
+  const migrationKey = `migrated_chats_${LOCAL_USER_ID}`;
   const alreadyMigrated = readLocalStorage(migrationKey);
-  const existingChats = await getChatsDb(userId);
+  const existingChats = await getChatsDb(LOCAL_USER_ID);
   const existingChatIds = new Set(existingChats.map((chat) => chat.id));
 
   if (alreadyMigrated && localChats.every((chat) => existingChatIds.has(chat.id))) {
@@ -57,15 +49,7 @@ export async function migrateLocalChatsToDatabase(
 
       try {
         if (shouldCreateChat) {
-          await createChatDb({
-            id: chat.id,
-            title: chat.title,
-            user_id: userId,
-            model: chat.model || DEFAULT_MODEL_ID,
-            customization_prompt: chat.customizationPrompt ?? undefined,
-            is_pinned: chat.isPinned || false,
-            created_at: toCreatedAtIso(chat.createdAt),
-          });
+          await createChatDb(toChatRecord(chat));
           migratedCount = 1;
         }
 
@@ -82,23 +66,7 @@ export async function migrateLocalChatsToDatabase(
             }
 
             try {
-              await createMessage({
-                id: messageId,
-                chat_id: chat.id,
-                role:
-                  message.role === 'assistant' || message.role === 'user'
-                    ? message.role
-                    : 'assistant',
-                content: message.content,
-                timestamp: message.timestamp,
-                model: message.model,
-                thinking_content: message.thinkingContent,
-                use_web_search: message.useWebSearch,
-                search_queries: message.searchQueries,
-                annotations: message.annotations,
-                attachments: message.attachments,
-                user_id: userId,
-              });
+              await createMessage(toMessageRecord({ ...message, id: messageId }, chat.id));
               logger.info(`[Migration] Reconciled message: ${messageId}`);
             } catch (messageError: unknown) {
               failed = true;
@@ -135,37 +103,9 @@ export async function migrateLocalChatsToDatabase(
 /**
  * Carga chats desde la base de datos
  */
-export async function loadChatsFromDatabase(userId: string): Promise<ChatType[]> {
-  const chatRecords = await getChatsDb(userId);
-
-  const loadedChats = await Promise.all(
-    chatRecords.map(async (chatRec) => {
-      const msgRecs = await getMessagesDb(chatRec.id);
-      const messages = msgRecs.map((mr) => ({
-        id: mr.id,
-        role: mr.role,
-        content: mr.content,
-        timestamp: new Date(mr.timestamp).getTime(),
-        model: mr.model || DEFAULT_MODEL_ID,
-        thinkingContent: mr.thinking_content,
-        useWebSearch: mr.use_web_search,
-        searchQueries: mr.search_queries,
-        annotations: mr.annotations,
-        attachments: mr.attachments,
-      }));
-
-      return {
-        id: chatRec.id,
-        title: chatRec.title,
-        messages,
-        createdAt: new Date(chatRec.created_at).getTime(),
-        model: chatRec.model || DEFAULT_MODEL_ID,
-        isPersisted: true,
-        isPinned: chatRec.is_pinned || false,
-        customizationPrompt: chatRec.customization_prompt || undefined,
-      };
-    })
+export async function loadChatsFromDatabase(): Promise<ChatType[]> {
+  const chatRecords = await getChatsDb(LOCAL_USER_ID);
+  return Promise.all(
+    chatRecords.map(async (record) => fromChatRecord(record, await getMessagesDb(record.id)))
   );
-
-  return loadedChats;
 }

@@ -2,10 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Chat, Message } from '../../types';
 import {
   buildAssistantMessage,
-  buildAssistantMessageRecord,
   buildBaseMessages,
   buildStreamRequest,
-  buildUserMessageRecord,
   createAssistantDraft,
   createUserMessage,
   createWebSearchTool,
@@ -58,7 +56,7 @@ describe('generationPipeline', () => {
     });
   });
 
-  it('builds base messages with user preferences, chat customization and recent history', () => {
+  it('builds base messages with stable system prompts, history and the web context last', () => {
     const userMessage = createUserMessage({
       content: 'Hola',
       images: [],
@@ -78,10 +76,10 @@ describe('generationPipeline', () => {
     const baseMessages = buildBaseMessages({
       chat: baseChat([...messages, userMessage]),
       preferences: {
-        userName: 'David',
-        userKnowledge: 'TypeScript',
-        userTraits: 'Directo',
-        userAdditionalInfo: 'Prefiere español',
+        name: 'David',
+        knowledge: 'TypeScript',
+        traits: 'Directo',
+        additionalInfo: 'Prefiere español',
       },
       webSearchContext: 'Contexto web',
     });
@@ -95,12 +93,61 @@ describe('generationPipeline', () => {
       content:
         '--- INICIO PERSONALIZACIÓN DEL CHAT (preferencias del usuario) ---\nResponde con precisión.\n--- FIN PERSONALIZACIÓN DEL CHAT ---',
     });
-    expect(baseMessages[2]).toEqual({ role: 'system', content: 'Contexto web' });
-    expect(baseMessages).toHaveLength(13);
-    expect(baseMessages[baseMessages.length - 1]).toMatchObject({ role: 'user', content: 'Hola' });
+    // Sin system intermedios: el contexto web no rompe el prefijo cacheable.
+    expect(baseMessages.slice(2).every((message) => message.role !== 'system')).toBe(true);
+    expect(baseMessages).toHaveLength(2 + 13);
+    expect(baseMessages[2]).toMatchObject({ role: 'user', content: 'mensaje 0' });
+    expect(baseMessages[baseMessages.length - 1]).toEqual({
+      role: 'user',
+      content: 'Contexto web\n\n--- MENSAJE DEL USUARIO ---\nHola',
+    });
   });
 
-  it('creates OpenRouter web search and stream requests from model capabilities', () => {
+  it('keeps the request prefix identical between consecutive turns', () => {
+    const preferences = {
+      name: 'David',
+      knowledge: '',
+      traits: '',
+      additionalInfo: '',
+    };
+    let history: Message[] = [];
+    let previous: ReturnType<typeof buildBaseMessages> | null = null;
+    let prefixBreaks = 0;
+
+    for (let turn = 0; turn < 60; turn += 1) {
+      history = [
+        ...history,
+        { id: `u-${turn}`, role: 'user', content: `pregunta ${turn}`, timestamp: turn * 2 },
+      ];
+      const current = buildBaseMessages({ chat: baseChat(history), preferences });
+      if (previous) {
+        const sharedPrefix = previous.slice(0, -1);
+        const stillPrefix = sharedPrefix.every(
+          (message, index) => JSON.stringify(message) === JSON.stringify(current[index])
+        );
+        if (!stillPrefix) {
+          prefixBreaks += 1;
+        }
+      }
+      previous = [...current, { role: 'assistant', content: `respuesta ${turn}` }];
+      history = [
+        ...history,
+        {
+          id: `a-${turn}`,
+          role: 'assistant',
+          content: `respuesta ${turn}`,
+          timestamp: turn * 2 + 1,
+        },
+      ];
+    }
+
+    // Los 20 primeros turnos caben enteros (≤ 40 mensajes); después el inicio
+    // avanza en saltos de 10 mensajes, es decir, cada 5 turnos: 8 cambios de
+    // prefijo en 60 turnos (una ventana deslizante de 10 mensajes rompía 55).
+    expect(prefixBreaks).toBe(8);
+  });
+
+  it('builds a reasoning stream request with a token budget, tools and prompt caching', () => {
     const webSearchTool = createWebSearchTool();
     expect(webSearchTool).toMatchObject({
       type: 'openrouter:web_search',
@@ -118,21 +165,44 @@ describe('generationPipeline', () => {
     const streamRequest = buildStreamRequest({
       baseMessages: [{ role: 'user', content: 'Busca algo' }],
       config,
+      sessionId: 'chat-1',
     });
 
     expect(config.apiModelId).toBe('anthropic/claude-sonnet-4.5');
     expect(config.supportsReasoning).toBe(true);
-    expect(config.reasoning).toMatchObject({ enabled: true, max_tokens: 4000 });
+    expect(config.reasoning).toEqual({ max_tokens: 16384 });
     expect(streamRequest).toMatchObject({
       model: 'anthropic/claude-sonnet-4.5',
       tool_choice: 'auto',
       temperature: 0.7,
-      max_tokens: 2048,
+      max_tokens: 8192 + 16384,
+      cache_control: { type: 'ephemeral' },
+      session_id: 'chat-1',
     });
+    expect(streamRequest.max_tokens).toBeGreaterThan(config.reasoning?.max_tokens ?? 0);
     expect(streamRequest.tools?.some((tool) => tool.type === 'openrouter:web_search')).toBe(true);
   });
 
-  it('creates local messages and persistence records consistently', () => {
+  it('uses effort-based reasoning and no explicit cache_control for OpenAI models', () => {
+    const config = getStreamRequestConfig({
+      modelId: 'openai/gpt-5',
+      useWebSearchTool: false,
+      reasoningLevel: 'low',
+    });
+    const streamRequest = buildStreamRequest({
+      baseMessages: [{ role: 'user', content: 'Hola' }],
+      config,
+      sessionId: 'chat-2',
+    });
+
+    expect(config.reasoning).toEqual({ effort: 'low' });
+    expect(streamRequest.max_tokens).toBe(8192 + 2048);
+    expect(streamRequest.cache_control).toBeUndefined();
+    expect(streamRequest.session_id).toBe('chat-2');
+    expect(streamRequest.tools).toBeUndefined();
+  });
+
+  it('creates local user, draft and final assistant messages', () => {
     const userMessage = createUserMessage({
       content: '  Hola  ',
       images: [{ url: 'blob:preview', contentType: 'image/jpeg', data: 'xyz' }],
@@ -170,30 +240,12 @@ describe('generationPipeline', () => {
       content: '',
       useWebSearch: true,
     });
-    expect(
-      buildUserMessageRecord({ message: userMessage, chatId: 'chat-1', userId: 'local-user' })
-    ).toMatchObject({
-      id: '00000000-0000-4000-8000-000000000000',
-      chat_id: 'chat-1',
-      role: 'user',
-      content: 'Hola',
-      user_id: 'local-user',
-    });
-    expect(
-      buildAssistantMessageRecord({
-        message: assistantMessage,
-        chatId: 'chat-1',
-        userId: 'local-user',
-      })
-    ).toMatchObject({
-      id: '00000000-0000-4000-8000-000000000000',
-      chat_id: 'chat-1',
+    expect(assistantMessage).toMatchObject({
+      id: assistantDraft.id,
       role: 'assistant',
       content: 'Respuesta',
-      thinking_content: 'Plan',
-      use_web_search: true,
-      search_queries: ['consulta'],
-      user_id: 'local-user',
+      thinkingContent: 'Plan',
+      searchQueries: ['consulta'],
     });
   });
 });

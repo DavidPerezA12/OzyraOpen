@@ -3,12 +3,12 @@ import type { Chat, Message } from '../../types';
 import { createChat, createMessage, updateChatTitle } from '../../utils/db';
 import {
   persistChatIfNeeded,
-  saveAssistantMessageToLocalHistory,
   saveGeneratedTitleToLocalHistory,
-  saveUserMessageToLocalHistory,
+  saveMessageToLocalHistory,
 } from './localChatPersistence';
 
-vi.mock('../../utils/db', () => ({
+vi.mock('../../utils/db', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../utils/db')>()),
   createChat: vi.fn(),
   createMessage: vi.fn(),
   updateChatTitle: vi.fn(),
@@ -44,7 +44,7 @@ describe('localChatPersistence', () => {
     vi.clearAllMocks();
   });
 
-  it('persists a draft chat locally when a user id exists', async () => {
+  it('persists a draft chat for the local profile', async () => {
     vi.mocked(createChat).mockResolvedValue({
       id: chat.id,
       title: chat.title,
@@ -53,7 +53,7 @@ describe('localChatPersistence', () => {
       model: chat.model,
     });
 
-    await expect(persistChatIfNeeded({ chat, userId: 'local-user' })).resolves.toMatchObject({
+    await expect(persistChatIfNeeded(chat)).resolves.toMatchObject({
       id: 'chat-1',
       isPersisted: true,
     });
@@ -63,23 +63,20 @@ describe('localChatPersistence', () => {
         title: 'Nueva Conversación',
         user_id: 'local-user',
         model: 'openai/gpt-5-chat',
+        created_at: '1970-01-01T00:00:00.001Z',
       })
     );
   });
 
+  it('does not recreate chats that are already persisted', async () => {
+    const persisted = { ...chat, isPersisted: true };
+    await expect(persistChatIfNeeded(persisted)).resolves.toBe(persisted);
+    expect(createChat).not.toHaveBeenCalled();
+  });
+
   it('stores user and assistant messages as local records', async () => {
-    await saveUserMessageToLocalHistory({
-      message: userMessage,
-      chatId: chat.id,
-      userId: 'local-user',
-    });
-    await expect(
-      saveAssistantMessageToLocalHistory({
-        message: assistantMessage,
-        chatId: chat.id,
-        userId: 'local-user',
-      })
-    ).resolves.toBe('saved');
+    await saveMessageToLocalHistory(userMessage, chat.id);
+    await expect(saveMessageToLocalHistory(assistantMessage, chat.id)).resolves.toBe('saved');
 
     expect(createMessage).toHaveBeenNthCalledWith(
       1,
@@ -93,17 +90,9 @@ describe('localChatPersistence', () => {
 
   it('skips empty assistant messages and saves generated titles', async () => {
     await expect(
-      saveAssistantMessageToLocalHistory({
-        message: { ...assistantMessage, content: '   ' },
-        chatId: chat.id,
-        userId: 'local-user',
-      })
+      saveMessageToLocalHistory({ ...assistantMessage, content: '   ' }, chat.id)
     ).resolves.toBe('empty');
-    await saveGeneratedTitleToLocalHistory({
-      chatId: chat.id,
-      title: 'Título',
-      userId: 'local-user',
-    });
+    await saveGeneratedTitleToLocalHistory(chat.id, 'Título');
 
     expect(createMessage).not.toHaveBeenCalled();
     expect(updateChatTitle).toHaveBeenCalledWith('chat-1', 'Título');

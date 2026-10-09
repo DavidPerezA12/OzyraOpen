@@ -146,25 +146,11 @@ describe('chatService', () => {
     const controller = new AbortController();
     vi.mocked(createOpenRouterStream).mockResolvedValue(undefined);
 
-    await chatService.createChatCompletionStream(
-      request,
-      onChunk,
-      onComplete,
-      onError,
-      onAnnotations,
-      controller.signal
-    );
+    const callbacks = { onChunk, onComplete, onError, onAnnotations };
 
-    expect(createOpenRouterStream).toHaveBeenCalledWith(
-      request,
-      {
-        onChunk,
-        onComplete,
-        onError,
-        onAnnotations,
-      },
-      controller.signal
-    );
+    await chatService.createChatCompletionStream(request, callbacks, controller.signal);
+
+    expect(createOpenRouterStream).toHaveBeenCalledWith(request, callbacks, controller.signal);
   });
 
   it('reports health from OpenRouter config availability', async () => {

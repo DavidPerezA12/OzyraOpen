@@ -43,7 +43,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import type { Chat } from '../../types';
-import { getCurrentLanguage, t, translate } from '../../i18n';
+import { t, translate, useLanguage } from '../../i18n';
 
 /**
  * Tipos de comandos disponibles
@@ -73,7 +73,7 @@ interface CommandPaletteProps {
   /** Callback para cerrar el palette */
   onClose: () => void;
   /** Lista de chats disponibles */
-  chats?: Chat[];
+  chats?: readonly Chat[];
   /** Callback al seleccionar un chat */
   onSelectChat?: (chatId: string) => void;
   /** Callback al ejecutar un comando */
@@ -216,7 +216,7 @@ const useCommandPaletteCommands = ({
   onSelectChat,
   onExecuteCommand,
 }: UseCommandPaletteCommandsParams) => {
-  const activeLanguage = getCurrentLanguage();
+  const activeLanguage = useLanguage();
   const defaultCommands = useMemo<Command[]>(
     () => [
       {

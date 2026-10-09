@@ -15,7 +15,7 @@ const EMPTY_FAVORITES = new Set<string>();
 interface AppInteractionOverlaysProps {
   readonly showAdvancedSearch: boolean;
   readonly showCommandPalette: boolean;
-  readonly chats: Chat[];
+  readonly chats: readonly Chat[];
   readonly availableModelIds: string[];
   readonly isDarkMode: boolean;
   readonly favorites?: Set<string>;

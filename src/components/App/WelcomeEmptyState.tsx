@@ -1,7 +1,8 @@
 import { ArrowUpRight, Code2, Compass, GraduationCap, Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
-import type { WelcomeCategory } from '../../hooks/useAppUiState';
 import { t, type TranslationKey } from '../../i18n';
+
+export type WelcomeCategory = 'create' | 'explore' | 'code' | 'learn';
 
 interface WelcomeCategoryItem {
   readonly id: WelcomeCategory;

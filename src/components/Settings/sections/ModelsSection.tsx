@@ -2,7 +2,6 @@ import {
   Award,
   Bot,
   Brain,
-  Camera,
   ChevronDown,
   ChevronUp,
   Eye,
@@ -21,21 +20,10 @@ import {
 } from 'lucide-react';
 import React from 'react';
 import toast from 'react-hot-toast';
-import {
-  availableModels,
-  getModelCatalogSnapshot,
-  getModelUsageScores,
-  mapOpenRouterModelToInfo,
-  openRouterModelSupportsTextInTextOut,
-  subscribeToModelCatalog,
-  uniqueDisplayProviderNames,
-  updateAvailableModels,
-  type OpenRouterApiModel,
-  type ModelCatalogMeta,
-} from '../../../config/models';
-import { fetchOpenRouterModels } from '../../../services/openrouter/client';
+import { syncModelCatalog, useModelCatalog } from '../../../models/catalog';
+import { useModelUsageScores } from '../../../models/usage';
 import { logger } from '../../../utils/logger';
-import type { TranslationKey, TranslationParams } from '../../../i18n';
+import { t, type TranslationKey } from '../../../i18n';
 
 type CapabilityFiltersState = {
   readonly fast: boolean;
@@ -49,7 +37,6 @@ type CapabilityFiltersState = {
 type CapabilityFilterKey = keyof CapabilityFiltersState;
 
 interface ModelsSectionProps {
-  readonly isDarkMode: boolean;
   readonly enabledModelIds: readonly string[];
   readonly toggleModelEnabled: (modelId: string) => void;
   readonly modelSearch: string;
@@ -58,7 +45,6 @@ interface ModelsSectionProps {
   readonly setCapabilityFilters: (v: CapabilityFiltersState) => void;
   readonly selectedProviders: string[];
   readonly setSelectedProviders: (v: string[]) => void;
-  readonly t: (key: TranslationKey, params?: TranslationParams) => string;
 }
 
 const CAP_CONFIG: {
@@ -96,19 +82,11 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
   setCapabilityFilters,
   selectedProviders,
   setSelectedProviders,
-  t,
 }) => {
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [showAllProviders, setShowAllProviders] = React.useState(false);
-  const catalogSnapshot = React.useSyncExternalStore(
-    subscribeToModelCatalog,
-    getModelCatalogSnapshot,
-    getModelCatalogSnapshot
-  );
-  const catalogMeta = React.useMemo(
-    () => JSON.parse(catalogSnapshot) as ModelCatalogMeta,
-    [catalogSnapshot]
-  );
+  const { models, providerNames, meta: catalogMeta } = useModelCatalog();
+  const modelUsageScores = useModelUsageScores();
 
   const handleSync = async () => {
     if (isSyncing) {
@@ -117,11 +95,7 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
     setIsSyncing(true);
     const tid = toast.loading(t('syncing'));
     try {
-      const raw = await fetchOpenRouterModels();
-      const mapped = (raw as OpenRouterApiModel[]).flatMap((model) =>
-        openRouterModelSupportsTextInTextOut(model) ? [mapOpenRouterModelToInfo(model)] : []
-      );
-      updateAvailableModels(mapped);
+      await syncModelCatalog();
       toast.success(t('syncSuccess'), { id: tid });
     } catch (e) {
       logger.error('Error al sincronizar modelos', e);
@@ -151,9 +125,8 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
     Object.values(capabilityFilters).filter(Boolean).length + selectedProviders.length;
   const enabledModelIdSet = new Set(enabledModelIds);
   const selectedProviderSet = new Set(selectedProviders);
-  const modelUsageScores = getModelUsageScores();
 
-  const filtered = availableModels
+  const filtered = models
     .filter((m) => {
       if (selectedProviderSet.size > 0 && !selectedProviderSet.has(m.displayProviderName)) {
         return false;
@@ -185,24 +158,6 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
       );
     })
     .sort((a, b) => {
-      if (a.id === 'ozyra/auto-select') {
-        return -1;
-      }
-      if (b.id === 'ozyra/auto-select') {
-        return 1;
-      }
-      if ((a.isSpecial ?? false) && !(b.isSpecial ?? false)) {
-        return -1;
-      }
-      if (!(a.isSpecial ?? false) && (b.isSpecial ?? false)) {
-        return 1;
-      }
-      if ((a.isNew ?? false) && !(b.isNew ?? false)) {
-        return -1;
-      }
-      if (!(a.isNew ?? false) && (b.isNew ?? false)) {
-        return 1;
-      }
       const u = (modelUsageScores.get(b.id) ?? 0) - (modelUsageScores.get(a.id) ?? 0);
       return u !== 0 ? u : a.name.localeCompare(b.name);
     });
@@ -221,20 +176,12 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
       }
     });
 
-  const topP = uniqueDisplayProviderNames.filter((p) => TOP_PROVIDERS.includes(p));
-  const otherP = uniqueDisplayProviderNames.filter((p) => !TOP_PROVIDERS.includes(p));
+  const topP = providerNames.filter((p) => TOP_PROVIDERS.includes(p));
+  const otherP = providerNames.filter((p) => !TOP_PROVIDERS.includes(p));
 
   const providerChip = (p: string) => {
     const on = selectedProviderSet.has(p);
-    const model = availableModels.find((m) => m.displayProviderName === p);
-    const icon = model?.icon;
-    let iconEl: React.ReactNode = <Bot size={11} />;
-    if (typeof icon === 'string') {
-      iconEl = <img src={icon} alt="" style={{ width: 12, height: 12, objectFit: 'contain' }} />;
-    } else if (icon) {
-      const IC = icon as React.ElementType;
-      iconEl = <IC size={11} />;
-    }
+    const ProviderIcon = models.find((m) => m.displayProviderName === p)?.icon ?? Bot;
     return (
       <button
         type="button"
@@ -247,7 +194,7 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
         className={`mli-chip ${on ? 'mli-chip--on' : ''}`}
         aria-pressed={on}
       >
-        {iconEl}
+        <ProviderIcon size={11} />
         {p}
       </button>
     );
@@ -261,8 +208,7 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
           <h2 className="cfg-page-title">{t('modelsTitle')}</h2>
           <p className="cfg-page-desc" style={{ marginTop: '0.2rem' }}>
             <strong style={{ color: 'var(--text-primary)' }}>{enabledModelIds.length}</strong>{' '}
-            activos · {availableModels.length} disponibles · {uniqueDisplayProviderNames.length}{' '}
-            proveedores
+            activos · {models.length} disponibles · {providerNames.length} proveedores
             {catalogMeta.source === 'openrouter' && (
               <span
                 style={{
@@ -395,21 +341,7 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
       <div className="mli-list">
         {filtered.map((model) => {
           const on = enabledModelIdSet.has(model.id);
-          const icon = model.icon || Bot;
-          const iconEl =
-            typeof icon === 'string' ? (
-              <img
-                src={icon}
-                alt=""
-                style={{ width: 18, height: 18, objectFit: 'contain' }}
-                loading="lazy"
-              />
-            ) : (
-              (() => {
-                const IC = icon as React.ElementType;
-                return <IC size={18} style={{ color: 'var(--text-muted)' }} />;
-              })()
-            );
+          const ModelIcon = model.icon;
 
           const ctx = fmtCtx(model.contextLength);
 
@@ -417,15 +349,14 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
             <div key={model.id} className={`mli-item ${on ? 'mli-item--on' : ''}`}>
               {/* Left: icon + text */}
               <div className="mli-item-left">
-                <div className="mli-item-icon">{iconEl}</div>
+                <div className="mli-item-icon">
+                  <ModelIcon size={18} style={{ color: 'var(--text-muted)' }} />
+                </div>
                 <div className="mli-item-body">
                   {/* Name row */}
                   <div className="mli-item-name-row">
                     <span className="mli-item-name">{model.name}</span>
                     <span className="mli-item-provider">{model.displayProviderName}</span>
-                    {model.isNew && (
-                      <span className="mli-badge mli-badge--new">{t('modelBadgeNew')}</span>
-                    )}
                     {model.isRecommended && (
                       <span className="mli-badge mli-badge--rec">
                         <Award size={9} />
@@ -487,19 +418,13 @@ const ModelsSection: React.FC<ModelsSectionProps> = ({
                           Tools
                         </span>
                       )}
-                      {model.capabilities.images && (
-                        <span className="mli-cap">
-                          <Camera size={9} />
-                          Imgs
-                        </span>
-                      )}
                       {model.capabilities.webSearch && (
                         <span className="mli-cap">
                           <Globe size={9} />
                           Web
                         </span>
                       )}
-                      {model.capabilities.files && (
+                      {model.capabilities.pdfComprehension && (
                         <span className="mli-cap">
                           <FileText size={9} />
                           Archivos

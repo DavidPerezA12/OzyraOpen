@@ -18,7 +18,7 @@
  * @module Types
  * @example
  * ```tsx
- * import { Message, Chat, ModelInfo, UserPreferences } from '../types';
+ * import type { Message, Chat, ModelInfo } from '../types';
  *
  * // Usar tipos en componentes
  * const message: Message = {
@@ -40,13 +40,6 @@
 
 import type { ElementType } from 'react';
 
-export type ChatGenerationState = {
-  partialResponse: string | null;
-  thinkingProcessContent: string | null;
-  isReasoning: boolean;
-  streamingComplete: boolean;
-};
-
 export type UploadedImage = {
   url: string;
   contentType: string;
@@ -65,28 +58,6 @@ type AttachmentType = 'image' | 'file';
 
 /** Types of annotations that can be applied to message content */
 type AnnotationType = 'url_citation';
-
-/**
- * Source information for grounded segments in AI responses
- */
-interface SourceInfo {
-  /** URL of the source */
-  readonly url: string;
-  /** Title of the source page */
-  readonly title: string;
-  /** Confidence score of the source relevance (0-100) */
-  readonly confidence: number;
-}
-
-/**
- * Grounded segment with supporting sources
- */
-export interface GroundedSegment {
-  /** The text segment grounded in sources */
-  readonly text: string;
-  /** List of sources supporting this text segment */
-  readonly sources: readonly SourceInfo[];
-}
 
 /**
  * URL citation annotation details
@@ -146,26 +117,16 @@ export interface Message {
   readonly timestamp: number;
   /** ID of the AI model used to generate the message */
   readonly model?: string;
-  /** Indicates whether the message generation finished successfully */
-  readonly isComplete?: boolean;
-  /** Flag indicating if the message is currently being edited */
-  readonly isEditing?: boolean;
   /** Optional "thinking" process content before generating the final response */
   readonly thinkingContent?: string;
   /** Flag indicating if web search was used */
   readonly useWebSearch?: boolean;
   /** List of search queries used if web search was enabled */
   readonly searchQueries?: readonly string[];
-  /** Segments of the response grounded in web search results */
-  readonly groundedSegments?: readonly GroundedSegment[];
   /** Annotations within the message content */
   readonly annotations?: readonly MessageAnnotation[];
   /** Files or images attached to the message */
   readonly attachments?: readonly MessageAttachment[];
-  /** Local persistence state */
-  readonly syncStatus?: 'local-only' | 'pending-sync' | 'synced' | 'sync-error';
-  /** Last local update timestamp */
-  readonly updatedAt?: number;
 }
 
 // ============================================================================
@@ -175,20 +136,17 @@ export interface Message {
 /** Available model tiers */
 export type ModelTier = 'standard' | 'premium';
 
-/** Supported model providers */
-export type ModelProvider = 'openrouter';
-
 /**
  * Model capabilities configuration
  */
 export interface ModelCapabilities {
   /** Optimized for low latency */
   readonly fast: boolean;
-  /** Computer vision / image understanding */
+  /** Image understanding (accepts image attachments) */
   readonly vision: boolean;
   /** Advanced reasoning capabilities */
   readonly reasoning: boolean;
-  /** Supports effort-level control for reasoning */
+  /** Supports effort-level control for reasoning (low/medium/high) */
   readonly effortControl: boolean;
   /** Tool calling integrations */
   readonly toolCalling: boolean;
@@ -198,41 +156,30 @@ export interface ModelCapabilities {
   readonly pdfComprehension: boolean;
   /** Extended thinking phase support */
   readonly thinking: boolean;
-  /** Legacy alias: vision */
-  readonly images: boolean;
-  /** Legacy alias: pdfComprehension */
-  readonly files: boolean;
-  /** Legacy alias retained for compatibility */
+  /** Works with OpenRouter web search */
   readonly webSearch: boolean;
-  /** Legacy alias: toolCalling */
-  readonly tools: boolean;
-  /** Legacy alias: effortControl */
-  readonly reasoningLevels: boolean;
 }
 
 /**
-{{ ... }}
  * Model pricing information
  */
 export interface ModelPricing {
-  /** Cost per input token */
+  /** Cost per million input tokens (USD) */
   readonly input: number;
-  /** Cost per output token */
+  /** Cost per million output tokens (USD) */
   readonly output: number;
 }
 
 /**
- * Complete model information and metadata
+ * Serializable model metadata (what the catalog cache stores)
  */
-export interface ModelInfo {
+export interface ModelDefinition {
   /** Unique model identifier */
   readonly id: string;
   /** Display name of the model */
   readonly name: string;
-  /** Icono del modelo: componente React o ruta SVG */
-  readonly icon: ElementType | string;
-  /** Provider identifier */
-  readonly provider: ModelProvider;
+  /** Icon key: provider id (`anthropic`) or path to a custom SVG */
+  readonly iconKey: string;
   /** Human-readable provider name */
   readonly displayProviderName: string;
   /** Model tier (standard/premium) */
@@ -243,10 +190,6 @@ export interface ModelInfo {
   readonly capabilities: ModelCapabilities;
   /** Whether this model is recommended */
   readonly isRecommended?: boolean;
-  /** Whether this model is marked as special */
-  readonly isSpecial?: boolean;
-  /** Whether this model is newly added */
-  readonly isNew?: boolean;
   /** Whether this model is featured */
   readonly isFeatured?: boolean;
   /** Maximum context length in tokens */
@@ -255,6 +198,13 @@ export interface ModelInfo {
   readonly maxTokens?: number;
   /** Pricing information */
   readonly pricing?: ModelPricing;
+}
+
+/**
+ * Model metadata ready for the UI (icon resolved to a component)
+ */
+export interface ModelInfo extends ModelDefinition {
+  readonly icon: ElementType;
 }
 
 // ============================================================================
@@ -281,12 +231,4 @@ export interface Chat {
   readonly isPinned?: boolean;
   /** Whether the chat is persisted to database */
   readonly isPersisted?: boolean;
-  /** Local persistence state */
-  readonly syncStatus?: 'local-only' | 'pending-sync' | 'synced' | 'sync-error';
-  /** Last successful sync/update timestamp */
-  readonly lastSyncedAt?: number;
-  /** Last local update timestamp */
-  readonly updatedAt?: number;
-  /** Whether the chat has been locally deleted pending cleanup */
-  readonly isDeleted?: boolean;
 }

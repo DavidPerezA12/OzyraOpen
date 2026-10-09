@@ -19,11 +19,10 @@
  * ```
  */
 
-import { ExternalLink, Eye, Search, Trash, X as XIcon } from 'lucide-react';
+import { Eye, Search, Trash, X as XIcon } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
-import type { GroundedSegment } from '../../types';
 import { t } from '../../i18n';
-import { getSafeHostname, getSafeImageSrc, isSafeLinkHref } from '../../utils/safeUrl';
+import { getSafeImageSrc } from '../../utils/safeUrl';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -68,18 +67,6 @@ const getImageSource = (image: { url: string; contentType?: string; data?: strin
  */
 interface SearchQueriesProps {
   readonly queries: readonly string[];
-  readonly isDarkMode: boolean;
-}
-
-/**
- * Props para el componente GroundedSegmentsIndicator
- *
- * @interface GroundedSegmentsProps
- * @property {readonly GroundedSegment[]} segments - Lista de segmentos fundamentados con fuentes
- * @property {boolean} isDarkMode - Indica si el modo oscuro está activado
- */
-interface GroundedSegmentsProps {
-  readonly segments: readonly GroundedSegment[];
   readonly isDarkMode: boolean;
 }
 
@@ -242,75 +229,6 @@ export const SearchQueriesIndicator: React.FC<SearchQueriesProps> = ({ queries, 
         </div>
       ))}
     </div>
-  </div>
-);
-
-// ============================================================================
-// GROUNDED SEGMENTS INDICATOR
-// ============================================================================
-
-/**
- * Componente indicador de segmentos fundamentados
- *
- * Visualiza segmentos de texto que están respaldados por fuentes específicas.
- * Cada segmento muestra sus fuentes de apoyo con niveles de confianza,
- * enlaces externos y información de credibilidad.
- *
- * @param {GroundedSegmentsProps} props - Propiedades del componente
- * @returns {JSX.Element} Elemento JSX con los segmentos fundamentados
- */
-export const GroundedSegmentsIndicator: React.FC<GroundedSegmentsProps> = ({
-  segments,
-  isDarkMode,
-}) => (
-  <div className={`mb-4 space-y-3 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-    {segments.map((segment, segIdx) => (
-      <div key={`segment-${segIdx}`} className="space-y-2">
-        <div className="font-medium">{segment.text}</div>
-        <div className="space-y-1">
-          {segment.sources
-            .filter((source) => isSafeLinkHref(source.url))
-            .map((source) => (
-              <a
-                key={source.url}
-                href={source.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                referrerPolicy="no-referrer"
-                className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
-                  isDarkMode
-                    ? 'bg-slate-800/50 hover:bg-slate-800'
-                    : 'bg-slate-100/50 hover:bg-slate-100'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <ExternalLink size={14} className="opacity-70" />
-                  <span className="hover:underline">
-                    {source.title || getSafeHostname(source.url)}
-                  </span>
-                </div>
-                <div
-                  className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                    source.confidence >= 90
-                      ? isDarkMode
-                        ? 'bg-green-900/30 text-green-400'
-                        : 'bg-green-100 text-green-700'
-                      : source.confidence >= 70
-                        ? isDarkMode
-                          ? 'bg-yellow-900/30 text-yellow-400'
-                          : 'bg-yellow-100 text-yellow-700'
-                        : isDarkMode
-                          ? 'bg-orange-900/30 text-orange-400'
-                          : 'bg-orange-100 text-orange-700'
-                  }`}
-                >
-                  {source.confidence}% {t('confidenceLabel')}
-                </div>
-              </a>
-            ))}
-        </div>
-      </div>
-    ))}
   </div>
 );
 
